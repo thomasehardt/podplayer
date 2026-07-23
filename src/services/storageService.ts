@@ -1,4 +1,4 @@
-import type { Podcast, Episode, QueueItem, UserSettings } from '../types/podcast';
+import type { Podcast, Episode, QueueItem, UserSettings, PodcastSettings } from '../types/podcast';
 
 const KEYS = {
   SUBSCRIPTIONS: 'podplayer_subscriptions',
@@ -7,9 +7,11 @@ const KEYS = {
   EPISODE_PROGRESS: 'podplayer_episode_progress',
   PLAYED_EPISODES: 'podplayer_played_episodes',
   PODCAST_TAGS: 'podplayer_podcast_tags',
+  PODCAST_SETTINGS: 'podplayer_podcast_settings',
   SMART_PLAYLISTS: 'podplayer_smart_playlists',
   QUEUE: 'podplayer_queue',
   SETTINGS: 'podplayer_settings',
+  CURRENT_PLAYER_STATE: 'podplayer_current_state',
 };
 
 import type { SmartPlaylistRule } from '../types/podcast';
@@ -71,6 +73,14 @@ const DEFAULT_SETTINGS: UserSettings = {
   autoPlayNext: true,
   visualizerEnabled: true,
   hidePlayedEpisodes: true,
+};
+
+let cachedPlayedEpisodes: Record<string, boolean> | null = null;
+let cachedEpisodeProgress: Record<string, any> | null = null;
+
+export const clearStorageMemoryCaches = () => {
+  cachedPlayedEpisodes = null;
+  cachedEpisodeProgress = null;
 };
 
 export const storageService = {
@@ -174,10 +184,17 @@ export const storageService = {
     }
   },
 
-  getEpisodeProgress(): Record<string, { progress: number; duration: number; updatedAt: number }> {
+  clearMemoryCaches() {
+    clearStorageMemoryCaches();
+  },
+
+  // Episode Progress Tracking (Timestamp in seconds)
+  getEpisodeProgress(): Record<string, { progress: number; duration: number; updatedAt?: number }> {
+    if (cachedEpisodeProgress) return cachedEpisodeProgress;
     try {
       const data = localStorage.getItem(KEYS.EPISODE_PROGRESS);
-      return data ? JSON.parse(data) : {};
+      cachedEpisodeProgress = data ? JSON.parse(data) : {};
+      return cachedEpisodeProgress!;
     } catch {
       return {};
     }
@@ -191,6 +208,7 @@ export const storageService = {
       duration: duration || 0,
       updatedAt: Date.now(),
     };
+    cachedEpisodeProgress = allProgress;
     try {
       localStorage.setItem(KEYS.EPISODE_PROGRESS, JSON.stringify(allProgress));
       notifyChange();
@@ -206,9 +224,11 @@ export const storageService = {
 
   // Played Episodes Tracking
   getPlayedEpisodes(): Record<string, boolean> {
+    if (cachedPlayedEpisodes) return cachedPlayedEpisodes;
     try {
       const data = localStorage.getItem(KEYS.PLAYED_EPISODES);
-      return data ? JSON.parse(data) : {};
+      cachedPlayedEpisodes = data ? JSON.parse(data) : {};
+      return cachedPlayedEpisodes!;
     } catch {
       return {};
     }
@@ -231,6 +251,7 @@ export const storageService = {
     const map = this.getPlayedEpisodes();
     const isPlayed = !this.isEpisodePlayed(episodeId);
     map[episodeId] = isPlayed;
+    cachedPlayedEpisodes = map;
     try {
       localStorage.setItem(KEYS.PLAYED_EPISODES, JSON.stringify(map));
       notifyChange();
@@ -245,6 +266,7 @@ export const storageService = {
     episodeIds.forEach((id) => {
       map[id] = true;
     });
+    cachedPlayedEpisodes = map;
     try {
       localStorage.setItem(KEYS.PLAYED_EPISODES, JSON.stringify(map));
       notifyChange();
@@ -258,6 +280,7 @@ export const storageService = {
     episodeIds.forEach((id) => {
       delete map[id];
     });
+    cachedPlayedEpisodes = map;
     try {
       localStorage.setItem(KEYS.PLAYED_EPISODES, JSON.stringify(map));
       notifyChange();
@@ -361,6 +384,53 @@ export const storageService = {
       notifyChange();
     } catch (err) {
       console.error('Failed to save settings:', err);
+    }
+  },
+
+  // Per-Podcast Custom Settings (playback speed, sorting order, auto-download count)
+  getAllPodcastSettings(): Record<string, PodcastSettings> {
+    try {
+      const data = localStorage.getItem(KEYS.PODCAST_SETTINGS);
+      return data ? JSON.parse(data) : {};
+    } catch {
+      return {};
+    }
+  },
+
+  getPodcastShowSettings(podcastId: string): PodcastSettings {
+    const all = this.getAllPodcastSettings();
+    return all[podcastId] || {};
+  },
+
+  savePodcastShowSettings(podcastId: string, settings: Partial<PodcastSettings>): PodcastSettings {
+    const all = this.getAllPodcastSettings();
+    const existing = all[podcastId] || {};
+    const updated = { ...existing, ...settings };
+    all[podcastId] = updated;
+    try {
+      localStorage.setItem(KEYS.PODCAST_SETTINGS, JSON.stringify(all));
+      notifyChange();
+    } catch (err) {
+      console.error('Failed to save podcast show settings:', err);
+    }
+    return updated;
+  },
+
+  savePlayerState(state: { currentEpisode: Episode | null; currentTime: number; duration: number; playbackSpeed: number }): void {
+    try {
+      localStorage.setItem(KEYS.CURRENT_PLAYER_STATE, JSON.stringify(state));
+      notifyChange();
+    } catch (err) {
+      console.error('Failed to save player state:', err);
+    }
+  },
+
+  getPlayerState(): { currentEpisode: Episode | null; currentTime: number; duration: number; playbackSpeed: number } | null {
+    try {
+      const data = localStorage.getItem(KEYS.CURRENT_PLAYER_STATE);
+      return data ? JSON.parse(data) : null;
+    } catch {
+      return null;
     }
   },
 };

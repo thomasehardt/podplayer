@@ -11,7 +11,7 @@ export const FEATURED_PODCASTS: Podcast[] = [
     title: 'Syntax - Tasty Web Development Treats',
     author: 'Wes Bos & Scott Tolinski',
     description: 'Full Stack Developers Wes Bos and Scott Tolinski dive deep into web development topics, JavaScript frameworks, CSS tricks, node, react, performance and web security.',
-    artworkUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Podcasts116/v4/37/ef/5c/37ef5c20-6d43-5246-86c0-6d80a1ad14b8/mza_10787720970341775730.jpg/600x600bb.jpg',
+    artworkUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Podcasts211/v4/cf/ce/37/cfce3734-61fc-620d-8b76-0577b25ec69a/mza_6578663887800002601.jpeg/600x600bb.jpg',
     categories: ['Technology', 'Web Development'],
     website: 'https://syntax.fm',
     episodesCount: 750,
@@ -22,29 +22,29 @@ export const FEATURED_PODCASTS: Podcast[] = [
     title: 'Huberman Lab',
     author: 'Scicomm Media / Dr. Andrew Huberman',
     description: 'Huberman Lab discusses neuroscience: how our brain and its connections with the organs of our body control our behaviors, our perceptions, and our health.',
-    artworkUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Podcasts126/v4/4a/ee/80/4aee80d3-34e8-8bb8-a006-25805a8f4cbb/mza_10331005230983196969.jpg/600x600bb.jpg',
+    artworkUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Podcasts221/v4/9a/d3/19/9ad31912-0b5a-a16e-2d7c-9fd074698b9c/mza_8994222203629500925.jpg/600x600bb.jpg',
     categories: ['Science', 'Health & Fitness'],
     website: 'https://hubermanlab.com',
     episodesCount: 180,
   },
   {
     id: 'radiolab',
-    feedUrl: 'https://feeds.publicradio.org/public_feeds/radiolab/podcast/itunes.rss',
+    feedUrl: 'https://feeds.simplecast.com/EmVW7VGp',
     title: 'Radiolab',
     author: 'WNYC Studios',
     description: 'Investigating a strange world. Radiolab is a show about curiosity. Where sound illuminates ideas, and the boundaries blur between science, philosophy, and human experience.',
-    artworkUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Podcasts116/v4/8a/7e/1a/8a7e1ad4-3617-68b3-3a17-380ff98126e8/mza_14838615967733475713.png/600x600bb.jpg',
+    artworkUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Podcasts211/v4/2b/b2/4d/2bb24d28-f3bb-916f-6bf3-9e125ba5219b/mza_4476298389845914795.jpg/600x600bb.jpg',
     categories: ['Science', 'Society & Culture'],
     website: 'https://radiolab.org',
     episodesCount: 420,
   },
   {
     id: 'design-details',
-    feedUrl: 'https://feeds.simplecast.com/6_206951',
+    feedUrl: 'https://feeds.simplecast.com/eew_vyNL',
     title: 'Design Details',
     author: 'Brian Lovin & Marshall Bock',
     description: 'A weekly show about the design process, culture, and products behind software development.',
-    artworkUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Podcasts125/v4/21/df/b5/21dfb5c8-10be-098a-7848-d36c53578703/mza_14169724128522645604.jpg/600x600bb.jpg',
+    artworkUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Podcasts123/v4/af/0b/ca/af0bca59-705f-89f5-81d9-fa5772f4059c/mza_2967863360308179642.jpg/600x600bb.jpg',
     categories: ['Design', 'Technology'],
     website: 'https://designdetails.fm',
     episodesCount: 450,
@@ -55,7 +55,7 @@ export const FEATURED_PODCASTS: Podcast[] = [
     title: "Dan Carlin's Hardcore History",
     author: 'Dan Carlin',
     description: 'In "Hardcore History" journalist and broadcaster Dan Carlin takes his unique "Theatre of the Mind" style and applies it to history’s dramatic events.',
-    artworkUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Podcasts125/v4/fa/12/ed/fa12ed3b-65ff-7d05-4f3f-fae1efdf34b5/mza_7493774880816999620.jpg/600x600bb.jpg',
+    artworkUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Podcasts115/v4/49/b7/eb/49b7eb32-8f08-6fac-aadb-2f002131fe5f/mza_15196161972010256532.jpg/600x600bb.jpg',
     categories: ['History', 'Education'],
     website: 'https://dancarlin.com',
     episodesCount: 70,
@@ -66,7 +66,7 @@ export const FEATURED_PODCASTS: Podcast[] = [
     title: 'ShopTalk Show',
     author: 'Dave Rupert & Chris Coyier',
     description: 'A podcast about building websites. Hosted by Dave Rupert and Chris Coyier.',
-    artworkUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Podcasts126/v4/d1/8b/6e/d18b6e22-c841-f6cb-5d3c-99c00b3e70cf/mza_7314546419799292850.jpg/600x600bb.jpg',
+    artworkUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Podcasts125/v4/7b/29/20/7b2920d0-37a9-36e6-aa84-f3249b03f48e/mza_4868856405339949426.png/600x600bb.jpg',
     categories: ['Technology', 'Web Development'],
     website: 'https://shoptalkshow.com',
     episodesCount: 610,
@@ -166,7 +166,15 @@ async function fetchWithCorsProxy(url: string): Promise<string> {
   throw new Error(`Unable to fetch RSS feed from ${url}`);
 }
 
+const feedCache = new Map<string, { podcast: Podcast; timestamp: number }>();
+const CACHE_TTL_MS = 10 * 60 * 1000; // 10 minutes cache TTL
+
 export const rssService = {
+  clearCache(feedUrl?: string) {
+    if (feedUrl) feedCache.delete(feedUrl);
+    else feedCache.clear();
+  },
+
   async searchiTunes(query: string): Promise<Podcast[]> {
     if (!query.trim()) return [];
     try {
@@ -196,7 +204,14 @@ export const rssService = {
     }
   },
 
-  async parseRssFeed(feedUrl: string, fallbackPodcastInfo?: Partial<Podcast>): Promise<Podcast> {
+  async parseRssFeed(feedUrl: string, fallbackPodcastInfo?: Partial<Podcast>, forceRefresh = false): Promise<Podcast> {
+    if (!forceRefresh) {
+      const cached = feedCache.get(feedUrl);
+      if (cached && Date.now() - cached.timestamp < CACHE_TTL_MS) {
+        return cached.podcast;
+      }
+    }
+
     const xmlText = await fetchWithCorsProxy(feedUrl);
     const parsed = xmlParser.parse(xmlText);
 
@@ -288,7 +303,7 @@ export const rssService = {
       };
     }).filter((ep: Episode) => Boolean(ep.audioUrl));
 
-    return {
+    const result: Podcast = {
       id: fallbackPodcastInfo?.id || feedUrl,
       feedUrl,
       title,
@@ -300,25 +315,62 @@ export const rssService = {
       episodesCount: episodes.length,
       episodes,
     };
+
+    feedCache.set(feedUrl, { podcast: result, timestamp: Date.now() });
+    return result;
   },
 
-  parseOpml(xmlText: string): { title: string; feedUrl: string; website?: string }[] {
-    const parser = new DOMParser();
-    const xmlDoc = parser.parseFromString(xmlText, 'text/xml');
-    const outlines = xmlDoc.querySelectorAll('outline');
-    
-    const results: { title: string; feedUrl: string; website?: string }[] = [];
+  parseOpml(xmlText: string): { title: string; feedUrl: string; website?: string; description?: string }[] {
+    const results: { title: string; feedUrl: string; website?: string; description?: string }[] = [];
     const seenUrls = new Set<string>();
 
-    outlines.forEach((node) => {
-      const xmlUrl = node.getAttribute('xmlUrl') || node.getAttribute('xmlurl');
-      if (xmlUrl && !seenUrls.has(xmlUrl)) {
-        seenUrls.add(xmlUrl);
-        const title = node.getAttribute('text') || node.getAttribute('title') || 'Untitled Podcast';
-        const website = node.getAttribute('htmlUrl') || node.getAttribute('htmlurl') || undefined;
-        results.push({ title, feedUrl: xmlUrl, website });
+    try {
+      const parser = new XMLParser({
+        ignoreAttributes: false,
+        attributeNamePrefix: '@_',
+      });
+      const parsed = parser.parse(xmlText);
+
+      const extractOutlines = (obj: any) => {
+        if (!obj) return;
+        if (Array.isArray(obj)) {
+          obj.forEach(extractOutlines);
+        } else if (typeof obj === 'object') {
+          const feedUrl = obj['@_xmlUrl'] || obj['@_xmlurl'] || obj['@_url'];
+          if (feedUrl && typeof feedUrl === 'string' && !seenUrls.has(feedUrl)) {
+            seenUrls.add(feedUrl);
+            const title = obj['@_text'] || obj['@_title'] || 'Untitled Podcast';
+            const website = obj['@_htmlUrl'] || obj['@_htmlurl'] || undefined;
+            const description = obj['@_description'] || undefined;
+            results.push({ title, feedUrl, website, description });
+          }
+          for (const key in obj) {
+            if (typeof obj[key] === 'object') {
+              extractOutlines(obj[key]);
+            }
+          }
+        }
+      };
+
+      extractOutlines(parsed.opml || parsed);
+    } catch {
+      // DOMParser fallback
+      if (typeof DOMParser !== 'undefined') {
+        const parser = new DOMParser();
+        const xmlDoc = parser.parseFromString(xmlText, 'text/xml');
+        const outlines = xmlDoc.querySelectorAll('outline');
+        outlines.forEach((node) => {
+          const xmlUrl = node.getAttribute('xmlUrl') || node.getAttribute('xmlurl') || node.getAttribute('url');
+          if (xmlUrl && !seenUrls.has(xmlUrl)) {
+            seenUrls.add(xmlUrl);
+            const title = node.getAttribute('text') || node.getAttribute('title') || 'Untitled Podcast';
+            const website = node.getAttribute('htmlUrl') || node.getAttribute('htmlurl') || undefined;
+            const description = node.getAttribute('description') || undefined;
+            results.push({ title, feedUrl: xmlUrl, website, description });
+          }
+        });
       }
-    });
+    }
 
     return results;
   },

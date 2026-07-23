@@ -5,16 +5,23 @@ const SYNCED_KEYS = [
   'podplayer_episode_progress',
   'podplayer_played_episodes',
   'podplayer_podcast_tags',
+  'podplayer_podcast_settings',
   'podplayer_smart_playlists',
   'podplayer_queue',
   'podplayer_settings',
+  'podplayer_current_state',
 ];
 
 const DATA_CHANGED_EVENT = 'podplayer:data-changed';
 const PUSH_DEBOUNCE_MS = 1200;
+// Continuous playback fires the change event every timeupdate tick, which keeps
+// resetting the debounce and would otherwise mean nothing is pushed until playback
+// stops. This caps how long a burst of changes can defer a push.
+const PUSH_MAX_WAIT_MS = 25000;
 
 let username: string | null = null;
 let pushTimer: number | null = null;
+let maxWaitTimer: number | null = null;
 
 function collectLocalStorageBlob(): Record<string, unknown> {
   const blob: Record<string, unknown> = {};
@@ -82,14 +89,34 @@ export const syncService = {
 
   pushNow,
 
-  /** Debounces a push so rapid successive writes (e.g. scrubbing playback) collapse into one request. */
+  /**
+   * Debounces a push so rapid successive writes (e.g. scrubbing playback, or the
+   * continuous timeupdate tick during playback) collapse into one request — but
+   * guarantees a push at least every PUSH_MAX_WAIT_MS even if changes keep coming,
+   * so a long listening session isn't lost if the tab closes before it pauses.
+   */
   schedulePush(): void {
     if (!username) return;
     if (pushTimer !== null) window.clearTimeout(pushTimer);
     pushTimer = window.setTimeout(() => {
       pushTimer = null;
+      if (maxWaitTimer !== null) {
+        window.clearTimeout(maxWaitTimer);
+        maxWaitTimer = null;
+      }
       void pushNow();
     }, PUSH_DEBOUNCE_MS);
+
+    if (maxWaitTimer === null) {
+      maxWaitTimer = window.setTimeout(() => {
+        maxWaitTimer = null;
+        if (pushTimer !== null) {
+          window.clearTimeout(pushTimer);
+          pushTimer = null;
+        }
+        void pushNow();
+      }, PUSH_MAX_WAIT_MS);
+    }
   },
 };
 
