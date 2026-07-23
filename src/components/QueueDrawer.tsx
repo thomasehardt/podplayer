@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { usePlayer } from '../context/PlayerContext';
 import { DEFAULT_PODCAST_ARTWORK } from '../services/rssService';
 import type { QueueItem } from '../types/podcast';
-import { X, Trash2, Play, MoveUp, MoveDown, ListMusic, GripVertical } from 'lucide-react';
+import { X, Trash2, Play, Pause, MoveUp, MoveDown, ListMusic, GripVertical } from 'lucide-react';
 
 export const QueueDrawer: React.FC = () => {
   const {
@@ -13,6 +13,9 @@ export const QueueDrawer: React.FC = () => {
     clearQueue,
     moveQueueItem,
     playEpisode,
+    currentEpisode,
+    isPlaying,
+    togglePlayPause,
   } = usePlayer();
 
   const [draggedIdx, setDraggedIdx] = useState<number | null>(null);
@@ -43,7 +46,7 @@ export const QueueDrawer: React.FC = () => {
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
           <ListMusic size={20} style={{ color: 'var(--accent-primary)' }} />
           <h3 style={{ fontFamily: 'var(--font-heading)', fontSize: '1.2rem', fontWeight: 700 }}>
-            Up Next ({queue.length})
+            Queue ({(currentEpisode ? 1 : 0) + queue.length})
           </h3>
         </div>
 
@@ -59,7 +62,7 @@ export const QueueDrawer: React.FC = () => {
         </div>
       </div>
 
-      {queue.length === 0 ? (
+      {!currentEpisode && queue.length === 0 ? (
         <div style={{ textAlign: 'center', padding: '3rem 1rem', color: 'var(--text-muted)' }}>
           <p>Your queue is empty.</p>
           <p style={{ fontSize: '0.82rem', marginTop: '0.4rem' }}>
@@ -68,6 +71,72 @@ export const QueueDrawer: React.FC = () => {
         </div>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', overflowY: 'auto', flex: 1, paddingRight: '0.3rem' }}>
+          {currentEpisode && (
+            <div
+              style={{
+                background: 'var(--bg-surface-hover)',
+                border: '1px solid var(--accent-primary)',
+                borderRadius: 'var(--radius-md)',
+                padding: '0.8rem',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '0.75rem',
+              }}
+            >
+              <div style={{ width: '16px', flexShrink: 0 }} />
+              <img
+                src={currentEpisode.artworkUrl || currentEpisode.podcastArtwork || DEFAULT_PODCAST_ARTWORK}
+                alt={currentEpisode.title}
+                style={{ width: '44px', height: '44px', borderRadius: 'var(--radius-sm)', objectFit: 'cover' }}
+                onError={(e) => {
+                  (e.target as HTMLImageElement).src = DEFAULT_PODCAST_ARTWORK;
+                }}
+              />
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div
+                  style={{
+                    fontFamily: 'var(--font-heading)',
+                    fontSize: '0.7rem',
+                    fontWeight: 700,
+                    color: 'var(--accent-primary)',
+                    marginBottom: '0.15rem',
+                    letterSpacing: '0.03em',
+                  }}
+                >
+                  NOW PLAYING
+                </div>
+                <div
+                  style={{
+                    fontSize: '0.88rem',
+                    fontWeight: 700,
+                    whiteSpace: 'nowrap',
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                  }}
+                >
+                  {currentEpisode.title}
+                </div>
+                <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                  {currentEpisode.podcastTitle}
+                </div>
+              </div>
+              <button
+                className="btn-icon"
+                style={{ width: '28px', height: '28px' }}
+                onClick={togglePlayPause}
+                title={isPlaying ? 'Pause' : 'Play'}
+              >
+                {isPlaying ? <Pause size={13} /> : <Play size={13} />}
+              </button>
+            </div>
+          )}
+
+          {queue.length === 0 && currentEpisode && (
+            <div style={{ textAlign: 'center', padding: '1.5rem 1rem', color: 'var(--text-muted)', fontSize: '0.85rem' }}>
+              Nothing queued next. Add episodes using the queue button on any episode card.
+            </div>
+          )}
+
           {queue.map((item: QueueItem, idx: number) => (
             <div
               key={`${item.episode.id}-${idx}`}

@@ -13,6 +13,7 @@ import {
   ListMusic,
   HardDriveDownload,
   Minimize2,
+  X,
 } from 'lucide-react';
 import type { QueueItem } from '../types/podcast';
 
@@ -34,11 +35,12 @@ export const PopoutPlayerView: React.FC = () => {
     skipBackward,
     queue,
     playEpisode,
+    removeFromQueue,
   } = usePlayer();
 
   const [isCachedOffline, setIsCachedOffline] = useState(false);
   const [cachingProgress, setCachingProgress] = useState<number | null>(null);
-  const [showQueue, setShowQueue] = useState(false);
+  const [activeTab, setActiveTab] = useState<'player' | 'queue'>('player');
 
   // Notify main window when pop-up closes
   const handleClosePopout = () => {
@@ -150,7 +152,7 @@ export const PopoutPlayerView: React.FC = () => {
       }}
     >
       {/* Header */}
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1rem' }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.9rem' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
           <div
             style={{
@@ -211,86 +213,209 @@ export const PopoutPlayerView: React.FC = () => {
         </div>
       </div>
 
-      {/* Main Artwork */}
-      <div style={{ display: 'flex', justifyContent: 'center', margin: '0.5rem 0 1.2rem 0' }}>
-        <img
-          src={artworkSrc}
-          alt={currentEpisode.title}
-          style={{
-            width: '180px',
-            height: '180px',
-            borderRadius: 'var(--radius-md)',
-            objectFit: 'cover',
-            boxShadow: '0 12px 24px -6px rgba(0, 0, 0, 0.3)',
-          }}
-          onError={(e) => {
-            (e.target as HTMLImageElement).src = DEFAULT_PODCAST_ARTWORK;
-          }}
-        />
-      </div>
-
-      {/* Title & Author */}
-      <div style={{ textAlign: 'center', marginBottom: '1.2rem', padding: '0 0.5rem' }}>
-        <h3
-          style={{
-            fontFamily: 'var(--font-heading)',
-            fontSize: '1.05rem',
-            fontWeight: 700,
-            whiteSpace: 'nowrap',
-            overflow: 'hidden',
-            textOverflow: 'ellipsis',
-            marginBottom: '0.3rem',
-          }}
-          title={currentEpisode.title}
-        >
-          {currentEpisode.title}
-        </h3>
-        <p style={{ fontSize: '0.82rem', color: 'var(--text-muted)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-          {currentEpisode.podcastTitle}
-        </p>
-      </div>
-
-      {/* Scrubber Bar */}
-      <div style={{ marginBottom: '1.2rem' }}>
-        <input
-          type="range"
-          min={0}
-          max={duration || 100}
-          value={currentTime}
-          onChange={(e) => seekTo(Number(e.target.value))}
-          className="scrubber-bar"
-          style={{ width: '100%', cursor: 'pointer', marginBottom: '0.4rem' }}
-        />
-        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.78rem', color: 'var(--text-dim)' }}>
-          <span>{formatTime(currentTime)}</span>
-          <span>{formatTime(duration)}</span>
-        </div>
-      </div>
-
-      {/* Main Playback Controls */}
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '1.2rem', marginBottom: '1.2rem' }}>
-        <button className="btn-icon" onClick={() => skipBackward()} title="Back 15s">
-          <RotateCcw size={18} />
-        </button>
-
+      {/* Tab Switcher */}
+      <div
+        style={{
+          display: 'flex',
+          gap: '0.3rem',
+          background: 'var(--bg-surface)',
+          padding: '0.2rem',
+          borderRadius: 'var(--radius-full)',
+          border: '1px solid var(--border-subtle)',
+          marginBottom: '1rem',
+        }}
+      >
         <button
-          className="btn-primary"
-          onClick={togglePlayPause}
+          type="button"
+          onClick={() => setActiveTab('player')}
+          className="btn-icon"
           style={{
-            width: '56px',
-            height: '56px',
-            borderRadius: '50%',
-            justifyContent: 'center',
-            padding: 0,
+            flex: 1,
+            width: 'auto',
+            height: '30px',
+            borderRadius: 'var(--radius-full)',
+            fontSize: '0.8rem',
+            fontWeight: 600,
+            border: 'none',
+            background: activeTab === 'player' ? 'var(--accent-primary)' : 'transparent',
+            color: activeTab === 'player' ? '#fff' : 'var(--text-muted)',
           }}
         >
-          {isPlaying ? <Pause size={24} /> : <Play size={24} style={{ marginLeft: '3px' }} />}
+          Player
         </button>
-
-        <button className="btn-icon" onClick={() => skipForward()} title="Forward 30s">
-          <RotateCw size={18} />
+        <button
+          type="button"
+          onClick={() => setActiveTab('queue')}
+          className="btn-icon"
+          style={{
+            flex: 1,
+            width: 'auto',
+            height: '30px',
+            borderRadius: 'var(--radius-full)',
+            fontSize: '0.8rem',
+            fontWeight: 600,
+            border: 'none',
+            background: activeTab === 'queue' ? 'var(--accent-primary)' : 'transparent',
+            color: activeTab === 'queue' ? '#fff' : 'var(--text-muted)',
+          }}
+        >
+          Queue ({1 + queue.length})
         </button>
       </div>
+
+      {activeTab === 'player' ? (
+        <>
+          {/* Main Artwork */}
+          <div style={{ display: 'flex', justifyContent: 'center', margin: '0.5rem 0 1.2rem 0' }}>
+            <img
+              src={artworkSrc}
+              alt={currentEpisode.title}
+              style={{
+                width: '180px',
+                height: '180px',
+                borderRadius: 'var(--radius-md)',
+                objectFit: 'cover',
+                boxShadow: '0 12px 24px -6px rgba(0, 0, 0, 0.3)',
+              }}
+              onError={(e) => {
+                (e.target as HTMLImageElement).src = DEFAULT_PODCAST_ARTWORK;
+              }}
+            />
+          </div>
+
+          {/* Title & Author */}
+          <div style={{ textAlign: 'center', marginBottom: '1.2rem', padding: '0 0.5rem' }}>
+            <h3
+              style={{
+                fontFamily: 'var(--font-heading)',
+                fontSize: '1.05rem',
+                fontWeight: 700,
+                whiteSpace: 'nowrap',
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                marginBottom: '0.3rem',
+              }}
+              title={currentEpisode.title}
+            >
+              {currentEpisode.title}
+            </h3>
+            <p style={{ fontSize: '0.82rem', color: 'var(--text-muted)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+              {currentEpisode.podcastTitle}
+            </p>
+          </div>
+
+          {/* Scrubber Bar */}
+          <div style={{ marginBottom: '1.2rem' }}>
+            <input
+              type="range"
+              min={0}
+              max={duration || 100}
+              value={currentTime}
+              onChange={(e) => seekTo(Number(e.target.value))}
+              className="scrubber-bar"
+              style={{ width: '100%', cursor: 'pointer', marginBottom: '0.4rem' }}
+            />
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.78rem', color: 'var(--text-dim)' }}>
+              <span>{formatTime(currentTime)}</span>
+              <span>{formatTime(duration)}</span>
+            </div>
+          </div>
+
+          {/* Main Playback Controls */}
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '1.2rem', marginBottom: '1.2rem' }}>
+            <button className="btn-icon" onClick={() => skipBackward()} title="Back 15s">
+              <RotateCcw size={18} />
+            </button>
+
+            <button
+              className="btn-primary"
+              onClick={togglePlayPause}
+              style={{
+                width: '56px',
+                height: '56px',
+                borderRadius: '50%',
+                justifyContent: 'center',
+                padding: 0,
+              }}
+            >
+              {isPlaying ? <Pause size={24} /> : <Play size={24} style={{ marginLeft: '3px' }} />}
+            </button>
+
+            <button className="btn-icon" onClick={() => skipForward()} title="Forward 30s">
+              <RotateCw size={18} />
+            </button>
+          </div>
+        </>
+      ) : (
+        /* Queue Tab: Now Playing pinned + Up Next */
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '0.6rem', overflowY: 'auto', marginBottom: '1rem' }}>
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '0.6rem',
+              background: 'var(--bg-surface-hover)',
+              border: '1px solid var(--accent-primary)',
+              borderRadius: 'var(--radius-md)',
+              padding: '0.6rem 0.7rem',
+            }}
+          >
+            <img
+              src={artworkSrc}
+              alt={currentEpisode.title}
+              style={{ width: '38px', height: '38px', borderRadius: 'var(--radius-sm)', objectFit: 'cover', flexShrink: 0 }}
+              onError={(e) => {
+                (e.target as HTMLImageElement).src = DEFAULT_PODCAST_ARTWORK;
+              }}
+            />
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontFamily: 'var(--font-heading)', fontSize: '0.65rem', fontWeight: 700, color: 'var(--accent-primary)', letterSpacing: '0.03em' }}>
+                NOW PLAYING
+              </div>
+              <div style={{ fontSize: '0.8rem', fontWeight: 700, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                {currentEpisode.title}
+              </div>
+            </div>
+            <button className="btn-icon" style={{ width: '26px', height: '26px', flexShrink: 0 }} onClick={togglePlayPause} title={isPlaying ? 'Pause' : 'Play'}>
+              {isPlaying ? <Pause size={12} /> : <Play size={12} />}
+            </button>
+          </div>
+
+          {queue.length === 0 ? (
+            <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', textAlign: 'center', padding: '1rem 0' }}>
+              Nothing queued next.
+            </div>
+          ) : (
+            queue.map((item: QueueItem, i: number) => (
+              <div
+                key={`${item.episode.id}-${i}`}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '0.6rem',
+                  padding: '0.5rem 0.7rem',
+                  borderRadius: 'var(--radius-md)',
+                  background: 'var(--bg-surface)',
+                  border: '1px solid var(--border-subtle)',
+                }}
+              >
+                <span
+                  onClick={() => playEpisode(item.episode)}
+                  style={{ flex: 1, minWidth: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', fontSize: '0.8rem', cursor: 'pointer' }}
+                >
+                  {item.episode.title}
+                </span>
+                <button className="btn-icon" style={{ width: '24px', height: '24px', flexShrink: 0 }} onClick={() => playEpisode(item.episode)} title="Play Now">
+                  <Play size={11} />
+                </button>
+                <button className="btn-icon" style={{ width: '24px', height: '24px', flexShrink: 0 }} onClick={() => removeFromQueue(item.episode.id)} title="Remove">
+                  <X size={11} />
+                </button>
+              </div>
+            ))
+          )}
+        </div>
+      )}
 
       {/* Speed & Volume Footer */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '1rem', marginTop: 'auto', background: 'var(--bg-surface)', padding: '0.6rem 0.9rem', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-subtle)' }}>
@@ -310,16 +435,6 @@ export const PopoutPlayerView: React.FC = () => {
           <option value={2.0}>2.0x</option>
         </select>
 
-        {/* Queue Drawer Toggle */}
-        <button
-          className="btn-icon"
-          onClick={() => setShowQueue(!showQueue)}
-          style={{ width: '28px', height: '28px', background: showQueue ? 'var(--accent-primary)' : undefined, color: showQueue ? '#fff' : undefined }}
-          title="Toggle Queue"
-        >
-          <ListMusic size={14} />
-        </button>
-
         {/* Volume */}
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
           <button className="btn-icon" style={{ width: '24px', height: '24px', border: 'none' }} onClick={toggleMute}>
@@ -336,58 +451,6 @@ export const PopoutPlayerView: React.FC = () => {
           />
         </div>
       </div>
-
-      {/* Up Next Mini Queue Modal inside Pop-Out */}
-      {showQueue && (
-        <div
-          style={{
-            position: 'absolute',
-            bottom: '70px',
-            left: '1.2rem',
-            right: '1.2rem',
-            maxHeight: '220px',
-            background: 'var(--bg-glass)',
-            backdropFilter: 'blur(16px)',
-            border: '1px solid var(--border-strong)',
-            borderRadius: 'var(--radius-md)',
-            padding: '0.8rem',
-            overflowY: 'auto',
-            boxShadow: 'var(--shadow-lg)',
-            zIndex: 100,
-          }}
-        >
-          <div style={{ fontWeight: 700, fontSize: '0.82rem', marginBottom: '0.6rem', color: 'var(--accent-primary)' }}>
-            Up Next ({queue.length})
-          </div>
-          {queue.length === 0 ? (
-            <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Queue is empty.</div>
-          ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
-              {queue.map((item: QueueItem, i: number) => (
-                <div
-                  key={`${item.episode.id}-${i}`}
-                  onClick={() => playEpisode(item.episode)}
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'space-between',
-                    padding: '0.4rem 0.6rem',
-                    borderRadius: 'var(--radius-sm)',
-                    background: 'var(--bg-surface)',
-                    cursor: 'pointer',
-                    fontSize: '0.78rem',
-                  }}
-                >
-                  <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', flex: 1, marginRight: '0.5rem' }}>
-                    {item.episode.title}
-                  </span>
-                  <Play size={12} style={{ color: 'var(--text-muted)', flexShrink: 0 }} />
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
     </div>
   );
 };

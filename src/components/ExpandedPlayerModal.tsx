@@ -358,14 +358,52 @@ export const ExpandedPlayerModal: React.FC = () => {
         {activeTab === 'queue' && (
           <div style={{ width: '100%', maxWidth: '600px', flex: 1, display: 'flex', flexDirection: 'column' }}>
             <h3 style={{ fontFamily: 'var(--font-heading)', fontSize: '1.2rem', fontWeight: 700, marginBottom: '1rem' }}>
-              Up Next Queue ({queue.length})
+              Queue ({(currentEpisode ? 1 : 0) + queue.length})
             </h3>
-            {queue.length === 0 ? (
+            {!currentEpisode && queue.length === 0 ? (
               <div style={{ textAlign: 'center', padding: '3rem', color: 'var(--text-muted)' }}>
                 Your queue is empty. Add episodes to play next!
               </div>
             ) : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem', overflowY: 'auto', flex: 1 }}>
+                {currentEpisode && (
+                  <div
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '0.8rem',
+                      background: 'var(--bg-surface-hover)',
+                      border: '1px solid var(--accent-primary)',
+                      padding: '0.8rem 1rem',
+                      borderRadius: 'var(--radius-md)',
+                    }}
+                  >
+                    <img
+                      src={currentEpisode.artworkUrl || currentEpisode.podcastArtwork || DEFAULT_PODCAST_ARTWORK}
+                      alt={currentEpisode.title}
+                      style={{ width: '48px', height: '48px', borderRadius: 'var(--radius-sm)', objectFit: 'cover' }}
+                    />
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontFamily: 'var(--font-heading)', fontSize: '0.7rem', fontWeight: 700, color: 'var(--accent-primary)', marginBottom: '0.15rem', letterSpacing: '0.03em' }}>
+                        NOW PLAYING
+                      </div>
+                      <div style={{ fontWeight: 700, fontSize: '0.9rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                        {currentEpisode.title}
+                      </div>
+                      <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>{currentEpisode.podcastTitle}</div>
+                    </div>
+                    <button className="btn-icon" style={{ width: '32px', height: '32px' }} onClick={togglePlayPause} title={isPlaying ? 'Pause' : 'Play'}>
+                      {isPlaying ? <Pause size={16} /> : <Play size={16} />}
+                    </button>
+                  </div>
+                )}
+
+                {queue.length === 0 && currentEpisode && (
+                  <div style={{ textAlign: 'center', padding: '1.5rem', color: 'var(--text-muted)', fontSize: '0.88rem' }}>
+                    Nothing queued next. Add episodes to play after this one!
+                  </div>
+                )}
+
                 {queue.map((item: QueueItem, idx: number) => (
                   <div
                     key={`${item.episode.id}-${idx}`}

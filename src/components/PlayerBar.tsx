@@ -16,7 +16,6 @@ import {
   Activity,
   Maximize2,
   ExternalLink,
-  X,
 } from 'lucide-react';
 import type { SleepOption } from '../types/podcast';
 
@@ -84,25 +83,6 @@ export const PlayerBar: React.FC = () => {
 
   if (!currentEpisode) {
     return null;
-  }
-
-  if (isPopoutActive) {
-    return (
-      <footer className="player-bar" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 2rem' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', fontSize: '0.88rem', fontWeight: 600, color: 'var(--accent-primary)' }}>
-          <ExternalLink size={18} />
-          <span>Audio playing in Pop-Up Window — "{currentEpisode.title}"</span>
-        </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-          <button className="btn-primary" onClick={closePopoutWindow} style={{ fontSize: '0.82rem', padding: '0.4rem 1rem' }}>
-            Re-attach Player to Page
-          </button>
-          <button className="btn-icon" onClick={closePopoutWindow} style={{ width: '32px', height: '32px' }} title="Dismiss Notice">
-            <X size={16} />
-          </button>
-        </div>
-      </footer>
-    );
   }
 
   return (
@@ -326,9 +306,14 @@ export const PlayerBar: React.FC = () => {
         {/* Pop Out to Window */}
         <button
           className="btn-icon"
-          style={{ width: '34px', height: '34px' }}
-          onClick={openPopoutWindow}
-          title="Pop Out Player to Small Standalone Window"
+          style={{
+            width: '34px',
+            height: '34px',
+            borderColor: isPopoutActive ? 'var(--accent-primary)' : undefined,
+            color: isPopoutActive ? 'var(--accent-primary)' : undefined,
+          }}
+          onClick={isPopoutActive ? closePopoutWindow : openPopoutWindow}
+          title={isPopoutActive ? 'Close Pop-Out Window' : 'Pop Out Player to Small Standalone Window'}
         >
           <ExternalLink size={16} />
         </button>

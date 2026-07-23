@@ -145,51 +145,20 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
   const channelRef = useRef<BroadcastChannel | null>(null);
   const popoutWindowRef = useRef<Window | null>(null);
-  const popoutActiveRef = useRef(false);
-  const mirroredStateRef = useRef<{ episode: Episode | null; time: number; playing: boolean; speed: number }>({
-    episode: null,
-    time: 0,
-    playing: false,
-    speed: 1,
-  });
   const isPopoutWindowSelf =
     typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('popout') === 'true';
 
-  useEffect(() => {
-    popoutActiveRef.current = isPopoutActive;
-  }, [isPopoutActive]);
-
-  // Reclaims local audio playback from the point the pop-out window last reported,
-  // used both when the main window re-attaches and when the pop-out closes itself.
-  const reclaimPlaybackFromPopout = () => {
-    const audio = audioRef.current;
-    const { episode, time, playing, speed } = mirroredStateRef.current;
-    if (!audio || !episode) return;
-    void offlineCacheService.getPlayableUrl(episode.audioUrl).then((playableUrl) => {
-      setAudioSrc(audio, playableUrl);
-      audio.playbackRate = speed || 1;
-      const resume = () => {
-        try {
-          audio.currentTime = time;
-        } catch {
-          // ignore seek error if unbuffered
-        }
-        if (playing) {
-          audio.play().catch((err: unknown) => console.error('Audio reclaim playback error:', err));
-        }
-      };
-      if (audio.readyState >= 1) {
-        resume();
-      } else {
-        audio.addEventListener('loadedmetadata', resume, { once: true });
-      }
-    });
-  };
-
-  // Broadcasts this window's live audio state; only meaningful from the pop-out
-  // window, which is the active player while it's open.
-  const broadcastPopoutState = () => {
-    if (!isPopoutWindowSelf || !channelRef.current || !audioRef.current) return;
+  // The main window's <audio> element is the only one that ever actually plays
+  // sound — it keeps running uninterrupted whether or not a pop-out is open.
+  // The pop-out window is a pure remote control: it mirrors state broadcast
+  // here and sends COMMAND messages back instead of touching its own audio.
+  // (A "hand off ownership to a fresh <audio> element" design was tried first,
+  // but resuming it on re-attach requires calling audio.play() from an async
+  // message handler with no direct user gesture on this document — browsers'
+  // autoplay policy silently blocks that, since the gesture happened in the
+  // pop-out's separate top-level browsing context, not this one.)
+  const broadcastPlaybackState = () => {
+    if (isPopoutWindowSelf || !channelRef.current || !audioRef.current) return;
     channelRef.current.postMessage({
       type: 'STATE_SYNC',
       currentEpisode: currentEpisodeRef.current,
@@ -197,8 +166,41 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       duration: audioRef.current.duration || 0,
       isPlaying: !audioRef.current.paused,
       playbackSpeed: audioRef.current.playbackRate,
+      volume: audioRef.current.volume,
+      isMuted: audioRef.current.muted || audioRef.current.volume === 0,
     });
   };
+
+  const sendCommand = (action: string, payload?: Record<string, unknown>) => {
+    if (channelRef.current) {
+      channelRef.current.postMessage({ type: 'COMMAND', action, ...payload });
+    }
+  };
+
+  // Always holds the latest versions of the control functions below, so the
+  // COMMAND handler (registered once, inside a mount-only effect) never calls
+  // a stale closure frozen at first render.
+  const latestActionsRef = useRef<{
+    togglePlayPause: () => void;
+    seekTo: (seconds: number) => void;
+    skipForward: (seconds?: number) => void;
+    skipBackward: (seconds?: number) => void;
+    setVolume: (vol: number) => void;
+    toggleMute: () => void;
+    setPlaybackSpeed: (speed: number) => void;
+    playEpisode: (episode: Episode, initialTime?: number) => void;
+    removeFromQueue: (episodeId: string) => void;
+  }>({
+    togglePlayPause: () => {},
+    seekTo: () => {},
+    skipForward: () => {},
+    skipBackward: () => {},
+    setVolume: () => {},
+    toggleMute: () => {},
+    setPlaybackSpeed: () => {},
+    playEpisode: () => {},
+    removeFromQueue: () => {},
+  });
 
   // BroadcastChannel Sync between Main Window & Pop-Out Player Window
   useEffect(() => {
@@ -211,20 +213,30 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       if (type === 'POPOUT_OPENED') {
         setIsPopoutActive(true);
       } else if (type === 'POPOUT_CLOSED') {
-        const wasActive = popoutActiveRef.current;
-        popoutActiveRef.current = false;
         setIsPopoutActive(false);
-        if (wasActive && !isPopoutWindowSelf) {
-          reclaimPlaybackFromPopout();
-        }
-      } else if (type === 'STATE_SYNC' && !isPopoutWindowSelf) {
-        const { currentEpisode: ep, currentTime: t, duration: d, isPlaying: p, playbackSpeed: s } = event.data;
-        mirroredStateRef.current = { episode: ep ?? null, time: t ?? 0, playing: !!p, speed: s || 1 };
+      } else if (type === 'STATE_SYNC' && isPopoutWindowSelf) {
+        const { currentEpisode: ep, currentTime: t, duration: d, isPlaying: p, playbackSpeed: s, volume: v, isMuted: m } = event.data;
         setCurrentEpisode(ep ?? null);
         setCurrentTime(t ?? 0);
         setDuration(d ?? 0);
         setIsPlaying(!!p);
         if (s) setPlaybackSpeedState(s);
+        if (typeof v === 'number') setVolumeState(v);
+        if (typeof m === 'boolean') setIsMutedState(m);
+      } else if (type === 'COMMAND' && !isPopoutWindowSelf) {
+        const { action, ...payload } = event.data;
+        const actions = latestActionsRef.current;
+        switch (action) {
+          case 'togglePlayPause': actions.togglePlayPause(); break;
+          case 'seekTo': actions.seekTo(payload.seconds); break;
+          case 'skipForward': actions.skipForward(payload.seconds); break;
+          case 'skipBackward': actions.skipBackward(payload.seconds); break;
+          case 'setVolume': actions.setVolume(payload.vol); break;
+          case 'toggleMute': actions.toggleMute(); break;
+          case 'setPlaybackSpeed': actions.setPlaybackSpeed(payload.speed); break;
+          case 'playEpisode': actions.playEpisode(payload.episode, payload.initialTime); break;
+          case 'removeFromQueue': actions.removeFromQueue(payload.episodeId); break;
+        }
       }
     };
 
@@ -242,15 +254,10 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       'width=420,height=660,left=120,top=120,resizable=yes,scrollbars=no,status=no,toolbar=no,menubar=no'
     );
     if (!win) {
-      // Popup blocked — leave main-window playback untouched.
       console.warn('Pop-out window blocked by the browser.');
       return;
     }
     popoutWindowRef.current = win;
-    // Hand off audio ownership to the pop-out window so both windows never
-    // play at once — the pop-out reports its state back via STATE_SYNC once open.
-    if (audioRef.current) audioRef.current.pause();
-    popoutActiveRef.current = true;
     setIsPopoutActive(true);
     if (channelRef.current) {
       channelRef.current.postMessage({ type: 'POPOUT_OPENED' });
@@ -258,13 +265,14 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   };
 
   const closePopoutWindow = () => {
-    // Close the real window handle; the pop-out's own beforeunload handler
-    // broadcasts POPOUT_CLOSED, which is what actually triggers reclaiming
-    // playback below — keeping a single source of truth for "the popout is gone."
     if (popoutWindowRef.current && !popoutWindowRef.current.closed) {
       popoutWindowRef.current.close();
     }
     popoutWindowRef.current = null;
+    setIsPopoutActive(false);
+    if (channelRef.current) {
+      channelRef.current.postMessage({ type: 'POPOUT_CLOSED' });
+    }
   };
   
   // Audio State
@@ -315,11 +323,11 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
     const handlePlay = () => {
       setIsPlaying(true);
-      broadcastPopoutState();
+      broadcastPlaybackState();
     };
     const handlePause = () => {
       setIsPlaying(false);
-      broadcastPopoutState();
+      broadcastPlaybackState();
     };
     const handleTimeUpdate = () => {
       const t = audio.currentTime;
@@ -333,14 +341,14 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
           playbackSpeed: audio.playbackRate || 1.0,
         });
       }
-      broadcastPopoutState();
+      broadcastPlaybackState();
     };
     const handleLoadedMetadata = () => {
       setDuration(audio.duration || 0);
     };
     const handleEnded = () => {
       setIsPlaying(false);
-      broadcastPopoutState();
+      broadcastPlaybackState();
       if (sleepTimerOption === -1) {
         setSleepTimerOption(0);
         setSleepTimerTimeRemaining(null);
@@ -370,24 +378,29 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       setDuration(savedState.duration);
       if (savedState.playbackSpeed) setPlaybackSpeedState(savedState.playbackSpeed);
 
-      void offlineCacheService.getPlayableUrl(savedState.currentEpisode.audioUrl).then((playableUrl) => {
-        setAudioSrc(audio, playableUrl);
-        const targetTime = savedState.currentTime;
-        const setInitialSeek = () => {
-          if (targetTime > 0 && targetTime < (audio.duration || Infinity)) {
-            try {
-              audio.currentTime = targetTime;
-            } catch {
-              // Ignore seek error if unbuffered
+      // The pop-out never plays its own audio (see broadcastPlaybackState above),
+      // so there's no reason for it to load the stream here — it'll pick up the
+      // real state from the main window's next STATE_SYNC broadcast instead.
+      if (!isPopoutWindowSelf) {
+        void offlineCacheService.getPlayableUrl(savedState.currentEpisode.audioUrl).then((playableUrl) => {
+          setAudioSrc(audio, playableUrl);
+          const targetTime = savedState.currentTime;
+          const setInitialSeek = () => {
+            if (targetTime > 0 && targetTime < (audio.duration || Infinity)) {
+              try {
+                audio.currentTime = targetTime;
+              } catch {
+                // Ignore seek error if unbuffered
+              }
             }
+          };
+          if (audio.readyState >= 1) {
+            setInitialSeek();
+          } else {
+            audio.addEventListener('loadedmetadata', setInitialSeek, { once: true });
           }
-        };
-        if (audio.readyState >= 1) {
-          setInitialSeek();
-        } else {
-          audio.addEventListener('loadedmetadata', setInitialSeek, { once: true });
-        }
-      });
+        });
+      }
     }
 
     return () => {
@@ -546,6 +559,10 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
   // Controls Methods
   const playEpisode = async (episode: Episode, initialTime?: number) => {
+    if (isPopoutWindowSelf) {
+      sendCommand('playEpisode', { episode, initialTime });
+      return;
+    }
     if (!audioRef.current) return;
     const audio = audioRef.current;
 
@@ -590,6 +607,10 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   };
 
   const togglePlayPause = async () => {
+    if (isPopoutWindowSelf) {
+      sendCommand('togglePlayPause');
+      return;
+    }
     if (!audioRef.current || !currentEpisode) return;
     const audio = audioRef.current;
 
@@ -627,6 +648,11 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   };
 
   const seekTo = (seconds: number) => {
+    if (isPopoutWindowSelf) {
+      sendCommand('seekTo', { seconds });
+      setCurrentTime(Math.max(0, Math.min(seconds, duration)));
+      return;
+    }
     if (!audioRef.current) return;
     const clamped = Math.max(0, Math.min(seconds, duration));
     audioRef.current.currentTime = clamped;
@@ -634,17 +660,31 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   };
 
   const skipForward = (seconds = 30) => {
+    if (isPopoutWindowSelf) {
+      sendCommand('skipForward', { seconds });
+      return;
+    }
     if (!audioRef.current) return;
     seekTo(audioRef.current.currentTime + seconds);
   };
 
   const skipBackward = (seconds = 10) => {
+    if (isPopoutWindowSelf) {
+      sendCommand('skipBackward', { seconds });
+      return;
+    }
     if (!audioRef.current) return;
     seekTo(audioRef.current.currentTime - seconds);
   };
 
   const setVolume = (vol: number) => {
     const clamped = Math.max(0, Math.min(1, vol));
+    if (isPopoutWindowSelf) {
+      sendCommand('setVolume', { vol: clamped });
+      setVolumeState(clamped);
+      setIsMutedState(clamped === 0);
+      return;
+    }
     setVolumeState(clamped);
     setIsMutedState(clamped === 0);
     if (audioRef.current) audioRef.current.volume = clamped;
@@ -652,6 +692,11 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   };
 
   const toggleMute = () => {
+    if (isPopoutWindowSelf) {
+      sendCommand('toggleMute');
+      setIsMutedState(!isMuted);
+      return;
+    }
     if (!audioRef.current) return;
     const nextMute = !isMuted;
     setIsMutedState(nextMute);
@@ -660,6 +705,11 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   };
 
   const setPlaybackSpeed = (speed: number) => {
+    if (isPopoutWindowSelf) {
+      sendCommand('setPlaybackSpeed', { speed });
+      setPlaybackSpeedState(speed);
+      return;
+    }
     setPlaybackSpeedState(speed);
     if (audioRef.current) audioRef.current.playbackRate = speed;
     updateSettings({ playbackSpeed: speed });
@@ -678,6 +728,9 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   };
 
   const removeFromQueue = (episodeId: string) => {
+    if (isPopoutWindowSelf) {
+      sendCommand('removeFromQueue', { episodeId });
+    }
     const updated = queue.filter((item: QueueItem) => item.episode.id !== episodeId);
     setQueue(updated);
     storageService.saveQueue(updated);
@@ -723,6 +776,23 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     storageService.saveQueue(newQueueItems);
     setIsQueueOpen(true);
   };
+
+  // Keep the COMMAND-handler's ref pointed at this render's control functions
+  // (the handler itself lives inside a mount-only effect, so it can't close
+  // over these directly without going stale).
+  useEffect(() => {
+    latestActionsRef.current = {
+      togglePlayPause,
+      seekTo,
+      skipForward,
+      skipBackward,
+      setVolume,
+      toggleMute,
+      setPlaybackSpeed,
+      playEpisode,
+      removeFromQueue,
+    };
+  });
 
   // Subscriptions & Favorites
   const toggleSubscription = (podcast: Podcast) => {
