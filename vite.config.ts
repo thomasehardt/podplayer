@@ -1,0 +1,234 @@
+import { defineConfig } from 'vite';
+import type { Plugin } from 'vite';
+import react from '@vitejs/plugin-react';
+import fs from 'fs';
+import path from 'path';
+import https from 'https';
+import http from 'http';
+import { URL } from 'url';
+
+function audioProxyPlugin(): Plugin {
+  const cacheDir = path.resolve(__dirname, '.audio-cache');
+
+  return {
+    name: 'audio-proxy-plugin',
+    configureServer(server) {
+      if (!fs.existsSync(cacheDir)) {
+        fs.mkdirSync(cacheDir, { recursive: true });
+      }
+
+      server.middlewares.use(async (req, res, next) => {
+        if (req.url?.startsWith('/api/feed-proxy')) {
+          try {
+            const reqUrl = new URL(req.url, `http://${req.headers.host}`);
+            const targetFeedUrl = reqUrl.searchParams.get('url');
+            if (!targetFeedUrl) {
+              res.statusCode = 400;
+              res.end('Missing feed url');
+              return;
+            }
+            proxyLiveXml(targetFeedUrl, req, res);
+            return;
+          } catch (err: any) {
+            res.statusCode = 500;
+            res.end('Feed proxy error: ' + err.message);
+            return;
+          }
+        }
+
+        if (req.url?.startsWith('/api/image')) {
+          try {
+            const reqUrl = new URL(req.url, `http://${req.headers.host}`);
+            const targetImageUrl = reqUrl.searchParams.get('url');
+            if (!targetImageUrl) {
+              res.statusCode = 400;
+              res.end('Missing url');
+              return;
+            }
+            proxyLiveStream(targetImageUrl, req, res);
+            return;
+          } catch (err: any) {
+            res.statusCode = 500;
+            res.end('Image proxy error: ' + err.message);
+            return;
+          }
+        }
+
+        if (!req.url?.startsWith('/api/stream') && !req.url?.startsWith('/api/download')) {
+          return next();
+        }
+
+        try {
+          const reqUrl = new URL(req.url, `http://${req.headers.host}`);
+          const targetAudioUrl = reqUrl.searchParams.get('url');
+
+          if (!targetAudioUrl) {
+            res.statusCode = 400;
+            res.end('Missing target url query parameter');
+            return;
+          }
+
+          // Generate safe local filename hash
+          const fileHash = Buffer.from(targetAudioUrl).toString('hex').slice(0, 32);
+          const filePath = path.join(cacheDir, `${fileHash}.mp3`);
+
+          // If already cached locally on server, serve from disk
+          if (fs.existsSync(filePath) && fs.statSync(filePath).size > 1000) {
+            serveLocalFile(req, res, filePath);
+            return;
+          }
+
+          // Download from remote podcast server to local cache file first
+          await downloadRemoteFile(targetAudioUrl, filePath);
+          serveLocalFile(req, res, filePath);
+        } catch (err: any) {
+          console.error('[Audio Proxy Plugin] Download/stream error:', err);
+          const reqUrl = new URL(req.url, `http://${req.headers.host}`);
+          const targetUrl = reqUrl.searchParams.get('url');
+          if (targetUrl) {
+            proxyLiveStream(targetUrl, req, res);
+          } else {
+            res.statusCode = 500;
+            res.end('Failed to load audio: ' + err.message);
+          }
+        }
+      });
+    },
+  };
+}
+
+function serveLocalFile(req: any, res: any, filePath: string) {
+  const stat = fs.statSync(filePath);
+  const fileSize = stat.size;
+  const range = req.headers.range;
+
+  if (range) {
+    const parts = range.replace(/bytes=/, '').split('-');
+    const start = parseInt(parts[0], 10);
+    const end = parts[1] ? parseInt(parts[1], 10) : fileSize - 1;
+    const chunksize = end - start + 1;
+
+    const file = fs.createReadStream(filePath, { start, end });
+    res.writeHead(206, {
+      'Content-Range': `bytes ${start}-${end}/${fileSize}`,
+      'Accept-Ranges': 'bytes',
+      'Content-Length': chunksize,
+      'Content-Type': 'audio/mpeg',
+      'Access-Control-Allow-Origin': '*',
+    });
+    file.pipe(res);
+  } else {
+    res.writeHead(200, {
+      'Content-Length': fileSize,
+      'Content-Type': 'audio/mpeg',
+      'Accept-Ranges': 'bytes',
+      'Access-Control-Allow-Origin': '*',
+    });
+    fs.createReadStream(filePath).pipe(res);
+  }
+}
+
+function downloadRemoteFile(urlStr: string, destPath: string, redirectCount = 0): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (redirectCount > 8) {
+      return reject(new Error('Too many redirects while downloading audio feed'));
+    }
+
+    const file = fs.createWriteStream(destPath);
+    const protocol = urlStr.startsWith('https') ? https : http;
+
+    const request = protocol.get(
+      urlStr,
+      { headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' } },
+      (response) => {
+        // Handle HTTP redirects (301, 302, 303, 307, 308)
+        if (response.statusCode && response.statusCode >= 300 && response.statusCode < 400 && response.headers.location) {
+          file.close();
+          if (fs.existsSync(destPath)) fs.unlinkSync(destPath);
+          const redirectUrl = new URL(response.headers.location, urlStr).toString();
+          return downloadRemoteFile(redirectUrl, destPath, redirectCount + 1).then(resolve).catch(reject);
+        }
+
+        if (response.statusCode !== 200) {
+          file.close();
+          if (fs.existsSync(destPath)) fs.unlinkSync(destPath);
+          return reject(new Error(`Failed to download audio. HTTP Status: ${response.statusCode}`));
+        }
+
+        response.pipe(file);
+        file.on('finish', () => {
+          file.close(() => resolve());
+        });
+      }
+    );
+
+    request.on('error', (err) => {
+      file.close();
+      if (fs.existsSync(destPath)) fs.unlinkSync(destPath);
+      reject(err);
+    });
+  });
+}
+
+function proxyLiveStream(targetUrl: string, req: any, res: any, redirectCount = 0) {
+  if (redirectCount > 8) {
+    res.statusCode = 500;
+    res.end('Proxy redirect loop');
+    return;
+  }
+
+  const protocol = targetUrl.startsWith('https') ? https : http;
+  protocol
+    .get(targetUrl, { headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' } }, (remoteRes) => {
+      if (remoteRes.statusCode && remoteRes.statusCode >= 300 && remoteRes.statusCode < 400 && remoteRes.headers.location) {
+        const redirectUrl = new URL(remoteRes.headers.location, targetUrl).toString();
+        return proxyLiveStream(redirectUrl, req, res, redirectCount + 1);
+      }
+
+      res.writeHead(remoteRes.statusCode || 200, {
+        ...remoteRes.headers,
+        'Access-Control-Allow-Origin': '*',
+      });
+      remoteRes.pipe(res);
+    })
+    .on('error', (err) => {
+      res.statusCode = 500;
+      res.end('Proxy stream failed: ' + err.message);
+    });
+}
+
+function proxyLiveXml(targetUrl: string, req: any, res: any, redirectCount = 0) {
+  if (redirectCount > 8) {
+    res.statusCode = 500;
+    res.end('Proxy redirect loop');
+    return;
+  }
+
+  const protocol = targetUrl.startsWith('https') ? https : http;
+  protocol
+    .get(targetUrl, { headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) PodPlayer/1.0' } }, (remoteRes) => {
+      if (remoteRes.statusCode && remoteRes.statusCode >= 300 && remoteRes.statusCode < 400 && remoteRes.headers.location) {
+        const redirectUrl = new URL(remoteRes.headers.location, targetUrl).toString();
+        return proxyLiveXml(redirectUrl, req, res, redirectCount + 1);
+      }
+
+      res.writeHead(remoteRes.statusCode || 200, {
+        'Content-Type': 'application/xml; charset=utf-8',
+        'Access-Control-Allow-Origin': '*',
+      });
+      remoteRes.pipe(res);
+    })
+    .on('error', (err) => {
+      res.statusCode = 500;
+      res.end('Feed proxy failed: ' + err.message);
+    });
+}
+
+// https://vite.dev/config/
+export default defineConfig({
+  plugins: [react(), audioProxyPlugin()],
+  server: {
+    host: true,
+    port: 5173,
+  },
+});
