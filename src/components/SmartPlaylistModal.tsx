@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { usePlayer } from '../context/PlayerContext';
 import { X, ListFilter, Plus, Trash2 } from 'lucide-react';
 import type { SmartPlaylistRule } from '../types/podcast';
@@ -9,7 +9,7 @@ interface SmartPlaylistModalProps {
 }
 
 export const SmartPlaylistModal: React.FC<SmartPlaylistModalProps> = ({ editPlaylist, onClose }) => {
-  const { createSmartPlaylist, updateSmartPlaylist, deleteSmartPlaylist } = usePlayer();
+  const { createSmartPlaylist, updateSmartPlaylist, deleteSmartPlaylist, subscriptions, podcastTags } = usePlayer();
 
   const [name, setName] = useState(editPlaylist?.name || '');
   const [unplayedOnly, setUnplayedOnly] = useState(editPlaylist?.unplayedOnly ?? true);
@@ -17,14 +17,26 @@ export const SmartPlaylistModal: React.FC<SmartPlaylistModalProps> = ({ editPlay
   const [maxEpisodes, setMaxEpisodes] = useState(editPlaylist?.maxEpisodes || 20);
   const [maxDurationMinutes, setMaxDurationMinutes] = useState(editPlaylist?.maxDurationMinutes || 0);
 
-  // Tag inputs
+  // Tag inputs & Match Mode
   const [tagInput, setTagInput] = useState('');
   const [includeTags, setIncludeTags] = useState<string[]>(editPlaylist?.includeTags || []);
+  const [tagMatchMode, setTagMatchMode] = useState<'any' | 'all'>(editPlaylist?.tagMatchMode || 'any');
 
-  const handleAddTag = () => {
-    const trimmed = tagInput.trim();
-    if (trimmed && !includeTags.includes(trimmed)) {
-      setIncludeTags([...includeTags, trimmed]);
+  // Compute all existing categories & tags across user subscriptions
+  const existingCategories = useMemo(() => {
+    const set = new Set<string>();
+    subscriptions.forEach((show) => {
+      const userTags = podcastTags[show.id] || [];
+      const cats = show.categories || [];
+      [...userTags, ...cats].forEach((t) => set.add(t));
+    });
+    return Array.from(set).sort((a, b) => a.localeCompare(b));
+  }, [subscriptions, podcastTags]);
+
+  const handleAddTag = (tagToAdd?: string) => {
+    const val = (tagToAdd || tagInput).trim();
+    if (val && !includeTags.includes(val)) {
+      setIncludeTags([...includeTags, val]);
       setTagInput('');
     }
   };
@@ -40,6 +52,7 @@ export const SmartPlaylistModal: React.FC<SmartPlaylistModalProps> = ({ editPlay
     const playlistData: Omit<SmartPlaylistRule, 'id'> = {
       name: name.trim(),
       includeTags,
+      tagMatchMode,
       includePodcastIds: [],
       excludePodcastIds: [],
       unplayedOnly,
@@ -90,33 +103,72 @@ export const SmartPlaylistModal: React.FC<SmartPlaylistModalProps> = ({ editPlay
 
           {/* Include Tags / Categories */}
           <div style={{ marginBottom: '1.2rem' }}>
-            <label style={{ display: 'block', fontSize: '0.82rem', fontWeight: 700, color: 'var(--text-muted)', marginBottom: '0.4rem' }}>
-              MATCH TAGS & CATEGORIES (Leave empty to match all)
-            </label>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.4rem' }}>
+              <label style={{ fontSize: '0.82rem', fontWeight: 700, color: 'var(--text-muted)' }}>
+                CATEGORIES & TAGS (Leave empty to match all)
+              </label>
+              {includeTags.length > 1 && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                  <span style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>Logic:</span>
+                  <select
+                    className="search-input"
+                    value={tagMatchMode}
+                    onChange={(e: any) => setTagMatchMode(e.target.value)}
+                    style={{ fontSize: '0.78rem', padding: '0.2rem 0.5rem', height: '26px' }}
+                  >
+                    <option value="any">Match ANY Tag (OR)</option>
+                    <option value="all">Match ALL Tags (AND)</option>
+                  </select>
+                </div>
+              )}
+            </div>
+
+            {/* Select from existing categories */}
             <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '0.6rem' }}>
-              <input
-                type="text"
+              <select
                 className="search-input"
-                placeholder="Add tag (e.g. Technology, Work, Commute)..."
-                value={tagInput}
-                onChange={(e) => setTagInput(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') {
-                    e.preventDefault();
-                    handleAddTag();
+                defaultValue=""
+                onChange={(e) => {
+                  if (e.target.value) {
+                    handleAddTag(e.target.value);
+                    e.target.value = '';
                   }
                 }}
-                style={{ flex: 1, paddingLeft: '1rem' }}
-              />
-              <button
-                type="button"
-                className="btn-icon"
-                style={{ width: 'auto', padding: '0 1rem', borderRadius: 'var(--radius-full)' }}
-                onClick={handleAddTag}
+                style={{ flex: 1, paddingLeft: '0.8rem' }}
               >
-                <Plus size={16} />
-                <span>Add Tag</span>
-              </button>
+                <option value="" disabled>Select from existing podcast categories...</option>
+                {existingCategories.map((cat) => (
+                  <option key={cat} value={cat} disabled={includeTags.includes(cat)}>
+                    {cat} {includeTags.includes(cat) ? '(added)' : ''}
+                  </option>
+                ))}
+              </select>
+
+              <div style={{ display: 'flex', gap: '0.4rem', width: '220px' }}>
+                <input
+                  type="text"
+                  className="search-input"
+                  placeholder="Custom tag..."
+                  value={tagInput}
+                  onChange={(e) => setTagInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      handleAddTag();
+                    }
+                  }}
+                  style={{ flex: 1, paddingLeft: '0.8rem' }}
+                />
+                <button
+                  type="button"
+                  className="btn-icon"
+                  style={{ width: '36px', height: '36px', borderRadius: 'var(--radius-sm)' }}
+                  onClick={() => handleAddTag()}
+                  title="Add Tag"
+                >
+                  <Plus size={16} />
+                </button>
+              </div>
             </div>
 
             {includeTags.length > 0 && (
@@ -135,6 +187,11 @@ export const SmartPlaylistModal: React.FC<SmartPlaylistModalProps> = ({ editPlay
                     />
                   </span>
                 ))}
+                {includeTags.length > 1 && (
+                  <span style={{ fontSize: '0.78rem', color: 'var(--accent-secondary)', alignSelf: 'center', marginLeft: '4px' }}>
+                    ({tagMatchMode === 'all' ? 'AND logic: show must match ALL tags' : 'OR logic: show can match ANY tag'})
+                  </span>
+                )}
               </div>
             )}
           </div>

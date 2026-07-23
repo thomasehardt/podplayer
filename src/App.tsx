@@ -10,9 +10,11 @@ import { QueueDrawer } from './components/QueueDrawer';
 import { RssImportModal } from './components/RssImportModal';
 import { SmartPlaylistView } from './components/SmartPlaylistView';
 import { SmartPlaylistModal } from './components/SmartPlaylistModal';
+import { CommuteModal } from './components/CommuteModal';
+import { SubscriptionsView } from './components/SubscriptionsView';
 import { FEATURED_PODCASTS } from './services/rssService';
 import { storageService } from './services/storageService';
-import { Sparkles, Bookmark, Heart, History, TrendingUp } from 'lucide-react';
+import { Sparkles, Heart, History, TrendingUp, X } from 'lucide-react';
 
 const MainView: React.FC = () => {
   const {
@@ -20,11 +22,13 @@ const MainView: React.FC = () => {
     searchQuery,
     searchResults,
     isSearching,
-    subscriptions,
     favoriteEpisodes,
   } = usePlayer();
 
   const historyEpisodes = storageService.getHistory();
+  const [showHero, setShowHero] = React.useState(() => {
+    return localStorage.getItem('podplayer_hero_dismissed') !== 'true';
+  });
 
   // If user is actively searching
   if (searchQuery.trim()) {
@@ -54,20 +58,7 @@ const MainView: React.FC = () => {
       return <PodcastDetail />;
 
     case 'subscriptions':
-      return (
-        <div>
-          <h2 className="section-title">
-            <span style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
-              <Bookmark style={{ color: 'var(--accent-primary)' }} />
-              Subscribed Shows
-            </span>
-          </h2>
-          <PodcastGrid
-            podcasts={subscriptions}
-            emptyMessage="You haven't subscribed to any podcasts yet. Explore podcasts in Discover or import a custom RSS feed!"
-          />
-        </div>
-      );
+      return <SubscriptionsView />;
 
     case 'favorites':
       return (
@@ -115,53 +106,73 @@ const MainView: React.FC = () => {
       );
 
     case 'discover':
-    default:
+    default: {
+      const dismissHero = () => {
+        setShowHero(false);
+        localStorage.setItem('podplayer_hero_dismissed', 'true');
+      };
+
       return (
         <div>
           {/* Featured Hero Banner */}
-          <div
-            style={{
-              background: 'linear-gradient(135deg, rgba(139, 92, 246, 0.2) 0%, rgba(6, 182, 212, 0.2) 100%)',
-              border: '1px solid var(--border-subtle)',
-              borderRadius: 'var(--radius-lg)',
-              padding: '2.5rem 2rem',
-              marginBottom: '2.5rem',
-              position: 'relative',
-              overflow: 'hidden',
-            }}
-          >
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--accent-primary)', fontWeight: 700, fontSize: '0.85rem', marginBottom: '0.6rem' }}>
-              <Sparkles size={18} />
-              <span>WELCOME TO PODPLAYER</span>
-            </div>
-            <h1
+          {showHero && (
+            <div
               style={{
-                fontFamily: 'var(--font-heading)',
-                fontSize: '2.4rem',
-                fontWeight: 800,
-                marginBottom: '0.8rem',
-                letterSpacing: '-0.5px',
+                background: 'linear-gradient(135deg, rgba(139, 92, 246, 0.2) 0%, rgba(6, 182, 212, 0.2) 100%)',
+                border: '1px solid var(--border-subtle)',
+                borderRadius: 'var(--radius-lg)',
+                padding: '2.2rem 2.5rem',
+                marginBottom: '2.5rem',
+                position: 'relative',
+                overflow: 'hidden',
               }}
             >
-              Stream Your Favorite Shows & RSS Feeds
-            </h1>
-            <p style={{ color: 'var(--text-muted)', fontSize: '1rem', maxWidth: '600px', lineHeight: '1.6' }}>
-              Explore curated podcasts, search millions of shows via iTunes, customize playback speed, view dynamic audio visualizers, and resume where you left off.
-            </p>
-          </div>
+              <button
+                className="btn-icon"
+                onClick={dismissHero}
+                style={{ position: 'absolute', top: '1.2rem', right: '1.2rem', width: '32px', height: '32px' }}
+                title="Dismiss Banner"
+              >
+                <X size={16} />
+              </button>
+
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--accent-primary)', fontWeight: 700, fontSize: '0.85rem', marginBottom: '0.6rem' }}>
+                <Sparkles size={18} />
+                <span>WELCOME TO PODPLAYER</span>
+              </div>
+              <h1
+                style={{
+                  fontFamily: 'var(--font-heading)',
+                  fontSize: '2.2rem',
+                  fontWeight: 800,
+                  marginBottom: '0.8rem',
+                  letterSpacing: '-0.5px',
+                }}
+              >
+                Stream Your Favorite Shows & RSS Feeds
+              </h1>
+              <p style={{ color: 'var(--text-muted)', fontSize: '0.95rem', maxWidth: '600px', lineHeight: '1.6' }}>
+                Explore curated podcasts, search millions of shows via iTunes, customize playback speed, view dynamic audio visualizers, and resume where you left off.
+              </p>
+            </div>
+          )}
 
           <h2 className="section-title">Featured Shows</h2>
           <PodcastGrid podcasts={FEATURED_PODCASTS} />
         </div>
       );
+    }
   }
 };
 
+
+import { ExpandedPlayerModal } from './components/ExpandedPlayerModal';
+
 const AppContent: React.FC = () => {
-  const { openPlaylistModal, setOpenPlaylistModal } = usePlayer();
+  const { currentEpisode, openPlaylistModal, setOpenPlaylistModal, openCommuteModal, setOpenCommuteModal, isPlayerExpanded } = usePlayer();
 
   return (
-    <div className="app-container">
+    <div className={`app-container ${!currentEpisode ? 'no-player' : ''}`}>
       <Sidebar />
       <Header />
       <main className="main-content">
@@ -171,14 +182,20 @@ const AppContent: React.FC = () => {
       <QueueDrawer />
       <RssImportModal />
       {openPlaylistModal && <SmartPlaylistModal onClose={() => setOpenPlaylistModal(false)} />}
+      {openCommuteModal && <CommuteModal onClose={() => setOpenCommuteModal(false)} />}
+      {isPlayerExpanded && <ExpandedPlayerModal />}
     </div>
   );
 };
 
+import { PopoutPlayerView } from './components/PopoutPlayerView';
+
 export const App: React.FC = () => {
+  const isPopout = typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('popout') === 'true';
+
   return (
     <PlayerProvider>
-      <AppContent />
+      {isPopout ? <PopoutPlayerView /> : <AppContent />}
     </PlayerProvider>
   );
 };

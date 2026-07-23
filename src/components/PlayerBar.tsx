@@ -14,6 +14,9 @@ import {
   ListMusic,
   SkipForward,
   Activity,
+  Maximize2,
+  ExternalLink,
+  X,
 } from 'lucide-react';
 import type { SleepOption } from '../types/podcast';
 
@@ -49,6 +52,10 @@ export const PlayerBar: React.FC = () => {
     queue,
     isQueueOpen,
     setIsQueueOpen,
+    setIsPlayerExpanded,
+    isPopoutActive,
+    openPopoutWindow,
+    closePopoutWindow,
     visualizerEnabled,
     toggleVisualizer,
   } = usePlayer();
@@ -76,11 +83,24 @@ export const PlayerBar: React.FC = () => {
   const progressPercent = duration > 0 ? (currentTime / duration) * 100 : 0;
 
   if (!currentEpisode) {
+    return null;
+  }
+
+  if (isPopoutActive) {
     return (
-      <footer className="player-bar">
-        <div style={{ color: 'var(--text-dim)', fontSize: '0.9rem' }}>Select an episode to start listening</div>
-        <div />
-        <div />
+      <footer className="player-bar" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 2rem' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', fontSize: '0.88rem', fontWeight: 600, color: 'var(--accent-primary)' }}>
+          <ExternalLink size={18} />
+          <span>Audio playing in Pop-Up Window — "{currentEpisode.title}"</span>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+          <button className="btn-primary" onClick={closePopoutWindow} style={{ fontSize: '0.82rem', padding: '0.4rem 1rem' }}>
+            Re-attach Player to Page
+          </button>
+          <button className="btn-icon" onClick={closePopoutWindow} style={{ width: '32px', height: '32px' }} title="Dismiss Notice">
+            <X size={16} />
+          </button>
+        </div>
       </footer>
     );
   }
@@ -88,7 +108,7 @@ export const PlayerBar: React.FC = () => {
   return (
     <footer className="player-bar">
       {/* Left: Track Metadata */}
-      <div className="player-track-info">
+      <div className="player-track-info" onClick={() => setIsPlayerExpanded(true)} style={{ cursor: 'pointer' }} title="Expand full player overlay">
         <img
           src={currentEpisode.artworkUrl || currentEpisode.podcastArtwork || DEFAULT_PODCAST_ARTWORK}
           alt={currentEpisode.title}
@@ -291,6 +311,26 @@ export const PlayerBar: React.FC = () => {
           title="Up Next Queue"
         >
           <ListMusic size={16} />
+        </button>
+
+        {/* Expand Player Overlay */}
+        <button
+          className="btn-icon"
+          style={{ width: '34px', height: '34px' }}
+          onClick={() => setIsPlayerExpanded(true)}
+          title="Expand Player to Full Screen"
+        >
+          <Maximize2 size={16} />
+        </button>
+
+        {/* Pop Out to Window */}
+        <button
+          className="btn-icon"
+          style={{ width: '34px', height: '34px' }}
+          onClick={openPopoutWindow}
+          title="Pop Out Player to Small Standalone Window"
+        >
+          <ExternalLink size={16} />
         </button>
       </div>
     </footer>

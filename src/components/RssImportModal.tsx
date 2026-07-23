@@ -18,6 +18,7 @@ export const RssImportModal: React.FC = () => {
   const [urlInput, setUrlInput] = useState('');
   const [opmlStatus, setOpmlStatus] = useState<string | null>(null);
   const [isImportingOpml, setIsImportingOpml] = useState(false);
+  const [isDragging, setIsDragging] = useState(false);
 
   if (!openRssModal) return null;
 
@@ -27,10 +28,7 @@ export const RssImportModal: React.FC = () => {
     importCustomRss(urlInput.trim());
   };
 
-  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
+  const processOpmlFile = async (file: File) => {
     setIsImportingOpml(true);
     setOpmlStatus(null);
     try {
@@ -47,11 +45,36 @@ export const RssImportModal: React.FC = () => {
     }
   };
 
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) await processOpmlFile(file);
+  };
+
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(true);
+  };
+
+  const handleDragLeave = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
+  };
+
+  const handleDrop = async (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
+    const file = e.dataTransfer.files?.[0];
+    if (file) await processOpmlFile(file);
+  };
+
   const sampleFeeds = [
     { label: 'Syntax.fm (Web Dev)', url: 'https://feed.syntax.fm' },
     { label: 'Huberman Lab (Science)', url: 'https://feeds.megaphone.fm/hubermanlab' },
     { label: 'ShopTalk Show (CSS & JS)', url: 'https://shoptalkshow.com/feed/podcast/' },
-    { label: 'Design Details', url: 'https://feeds.simplecast.com/6_206951' },
+    { label: 'Design Details', url: 'https://feeds.simplecast.com/eew_vyNL' },
   ];
 
   return (
@@ -197,28 +220,31 @@ export const RssImportModal: React.FC = () => {
             </p>
 
             <label
+              onDragOver={handleDragOver}
+              onDragLeave={handleDragLeave}
+              onDrop={handleDrop}
               style={{
                 display: 'flex',
                 flexDirection: 'column',
                 alignItems: 'center',
                 justifyContent: 'center',
                 gap: '0.8rem',
-                border: '2px dashed var(--border-strong)',
+                border: isDragging ? '2px dashed var(--accent-primary)' : '2px dashed var(--border-strong)',
                 borderRadius: 'var(--radius-md)',
                 padding: '2.5rem 1rem',
                 cursor: 'pointer',
-                background: 'var(--bg-card)',
+                background: isDragging ? 'rgba(139, 92, 246, 0.1)' : 'var(--bg-card)',
                 transition: 'all 0.2s ease',
                 textAlign: 'center',
               }}
             >
-              <Upload size={32} style={{ color: 'var(--accent-primary)' }} />
+              <Upload size={32} style={{ color: isDragging ? 'var(--accent-secondary)' : 'var(--accent-primary)' }} />
               <div>
                 <span style={{ fontWeight: 600, color: 'var(--text-main)' }}>
-                  Click to choose OPML file
+                  {isDragging ? 'Drop OPML file here...' : 'Click or Drag & Drop OPML file here'}
                 </span>
                 <p style={{ fontSize: '0.78rem', color: 'var(--text-dim)', marginTop: '4px' }}>
-                  Supports .opml or .xml files
+                  Supports .opml or .xml files exported from any podcast app
                 </p>
               </div>
               <input

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { usePlayer } from '../context/PlayerContext';
 import { EpisodeList } from './EpisodeList';
 import { SmartPlaylistModal } from './SmartPlaylistModal';
@@ -8,12 +8,15 @@ export const SmartPlaylistView: React.FC = () => {
   const {
     selectedSmartPlaylist,
     evaluateSmartPlaylist,
-    playEpisode,
-    addToQueue,
+    loadPlaylistQueue,
     setActiveTab,
   } = usePlayer();
 
   const [isEditing, setIsEditing] = useState(false);
+
+  const matchingEpisodes = useMemo(() => {
+    return selectedSmartPlaylist ? evaluateSmartPlaylist(selectedSmartPlaylist) : [];
+  }, [selectedSmartPlaylist, evaluateSmartPlaylist]);
 
   if (!selectedSmartPlaylist) {
     return (
@@ -26,17 +29,14 @@ export const SmartPlaylistView: React.FC = () => {
     );
   }
 
-  const matchingEpisodes = evaluateSmartPlaylist(selectedSmartPlaylist);
-
   const handlePlayAll = () => {
     if (matchingEpisodes.length === 0) return;
-    playEpisode(matchingEpisodes[0]);
-    // Queue remaining
-    matchingEpisodes.slice(1).forEach((ep) => addToQueue(ep));
+    loadPlaylistQueue(matchingEpisodes, true);
   };
 
   const handleAddAllToQueue = () => {
-    matchingEpisodes.forEach((ep) => addToQueue(ep));
+    if (matchingEpisodes.length === 0) return;
+    loadPlaylistQueue(matchingEpisodes, false);
   };
 
   return (

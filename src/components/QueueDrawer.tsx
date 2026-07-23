@@ -1,8 +1,8 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { usePlayer } from '../context/PlayerContext';
 import { DEFAULT_PODCAST_ARTWORK } from '../services/rssService';
 import type { QueueItem } from '../types/podcast';
-import { X, Trash2, Play, MoveUp, MoveDown, ListMusic } from 'lucide-react';
+import { X, Trash2, Play, MoveUp, MoveDown, ListMusic, GripVertical } from 'lucide-react';
 
 export const QueueDrawer: React.FC = () => {
   const {
@@ -15,7 +15,27 @@ export const QueueDrawer: React.FC = () => {
     playEpisode,
   } = usePlayer();
 
+  const [draggedIdx, setDraggedIdx] = useState<number | null>(null);
+
   if (!isQueueOpen) return null;
+
+  const handleDragStart = (e: React.DragEvent, idx: number) => {
+    setDraggedIdx(idx);
+    e.dataTransfer.effectAllowed = 'move';
+  };
+
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+  };
+
+  const handleDrop = (e: React.DragEvent, targetIdx: number) => {
+    e.preventDefault();
+    if (draggedIdx !== null && draggedIdx !== targetIdx) {
+      moveQueueItem(draggedIdx, targetIdx);
+    }
+    setDraggedIdx(null);
+  };
 
   return (
     <div className="queue-drawer">
@@ -51,16 +71,23 @@ export const QueueDrawer: React.FC = () => {
           {queue.map((item: QueueItem, idx: number) => (
             <div
               key={`${item.episode.id}-${idx}`}
+              draggable
+              onDragStart={(e) => handleDragStart(e, idx)}
+              onDragOver={handleDragOver}
+              onDrop={(e) => handleDrop(e, idx)}
               style={{
                 background: 'var(--bg-card)',
-                border: '1px solid var(--border-subtle)',
+                border: draggedIdx === idx ? '1px dashed var(--accent-primary)' : '1px solid var(--border-subtle)',
+                opacity: draggedIdx === idx ? 0.6 : 1,
                 borderRadius: 'var(--radius-md)',
                 padding: '0.8rem',
                 display: 'flex',
                 alignItems: 'center',
                 gap: '0.75rem',
+                cursor: 'grab',
               }}
             >
+              <GripVertical size={16} style={{ color: 'var(--text-dim)', flexShrink: 0, cursor: 'grab' }} />
               <img
                 src={item.episode.artworkUrl || item.episode.podcastArtwork || DEFAULT_PODCAST_ARTWORK}
                 alt={item.episode.title}

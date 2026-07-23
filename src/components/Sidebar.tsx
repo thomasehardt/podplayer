@@ -9,7 +9,8 @@ import {
   Heart, 
   PlusCircle,
   ListFilter,
-  Plus
+  Plus,
+  Car
 } from 'lucide-react';
 import type { NavigationTab } from '../types/podcast';
 
@@ -23,6 +24,7 @@ export const Sidebar: React.FC = () => {
     smartPlaylists = [],
     setSelectedSmartPlaylist,
     setOpenPlaylistModal,
+    setOpenCommuteModal,
     isMobileMenuOpen,
     setIsMobileMenuOpen,
   } = usePlayer();
@@ -68,6 +70,17 @@ export const Sidebar: React.FC = () => {
               )}
             </button>
           ))}
+          <button
+            className="nav-item"
+            style={{ color: 'var(--accent-primary)', fontWeight: 700 }}
+            onClick={() => {
+              setOpenCommuteModal(true);
+              setIsMobileMenuOpen(false);
+            }}
+          >
+            <Car size={19} />
+            <span style={{ flex: 1 }}>Drive & Commute Mode</span>
+          </button>
         </div>
 
       {/* Smart Playlists Section */}

@@ -13,6 +13,10 @@ import {
   CheckCheck,
   RotateCcw,
   X,
+  Sliders,
+  Gauge,
+  ArrowDownUp,
+  Download,
 } from 'lucide-react';
 
 export const PodcastDetail: React.FC = () => {
@@ -30,10 +34,15 @@ export const PodcastDetail: React.FC = () => {
     getPodcastTags,
     addTagToPodcast,
     removeTagFromPodcast,
+    getPodcastShowSettings,
+    updatePodcastShowSettings,
+    openPodcastDetail,
+    playbackSpeed,
   } = usePlayer();
 
   const [filterQuery, setFilterQuery] = useState('');
   const [showBatchMenu, setShowBatchMenu] = useState(false);
+  const [showPreferencesModal, setShowPreferencesModal] = useState(false);
 
   if (!selectedPodcast) {
     return (
@@ -53,8 +62,15 @@ export const PodcastDetail: React.FC = () => {
   const playedCount = episodes.filter((e) => isEpisodePlayed(e.id)).length;
   const unplayedCount = episodes.length - playedCount;
 
-  // Apply filters
-  let displayedEpisodes = episodes;
+  // Apply sorting & filters
+  const showSettings = getPodcastShowSettings(selectedPodcast.id);
+  const sortOrder = showSettings.sortOrder || 'newest';
+
+  let displayedEpisodes = [...episodes];
+
+  if (sortOrder === 'oldest') {
+    displayedEpisodes.reverse();
+  }
 
   if (hidePlayedEpisodes) {
     displayedEpisodes = displayedEpisodes.filter((e) => !isEpisodePlayed(e.id));
@@ -163,6 +179,16 @@ export const PodcastDetail: React.FC = () => {
             <button className="btn-primary" onClick={() => toggleSubscription(selectedPodcast)}>
               {subscribed ? <BookmarkCheck size={18} /> : <Bookmark size={18} />}
               <span>{subscribed ? 'Subscribed' : 'Subscribe to Show'}</span>
+            </button>
+
+            <button
+              className="btn-icon"
+              style={{ width: 'auto', padding: '0 1rem', borderRadius: 'var(--radius-full)', gap: '6px', fontSize: '0.85rem' }}
+              onClick={() => setShowPreferencesModal(true)}
+              title="Podcast Rules & Preferences"
+            >
+              <Sliders size={16} />
+              <span>Show Rules & Options</span>
             </button>
 
             {selectedPodcast.website && (
@@ -351,6 +377,26 @@ export const PodcastDetail: React.FC = () => {
           <div className="wave-bar" />
           <div className="wave-bar" />
         </div>
+      ) : (selectedPodcast as any).feedError ? (
+        <div
+          style={{
+            background: 'rgba(239, 68, 68, 0.1)',
+            border: '1px solid rgba(239, 68, 68, 0.3)',
+            borderRadius: 'var(--radius-md)',
+            padding: '2rem',
+            textAlign: 'center',
+            color: '#f87171',
+          }}
+        >
+          <h3 style={{ marginBottom: '0.5rem', fontSize: '1.2rem', fontWeight: 700 }}>Unable to Load Episode List</h3>
+          <p style={{ fontSize: '0.9rem', color: 'var(--text-muted)', marginBottom: '1.2rem' }}>
+            {(selectedPodcast as any).feedError}
+          </p>
+          <button className="btn-primary" onClick={() => openPodcastDetail(selectedPodcast)}>
+            <RotateCcw size={16} />
+            <span>Retry Fetching Feed</span>
+          </button>
+        </div>
       ) : (
         <EpisodeList
           episodes={displayedEpisodes}
@@ -360,6 +406,95 @@ export const PodcastDetail: React.FC = () => {
               : 'No episodes match your search query.'
           }
         />
+      )}
+      {/* Show Preferences & Rules Modal */}
+      {showPreferencesModal && (
+        <div className="modal-overlay" onClick={() => setShowPreferencesModal(false)}>
+          <div className="modal-content" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '520px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1.2rem' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
+                <Sliders size={22} style={{ color: 'var(--accent-primary)' }} />
+                <h3 style={{ fontFamily: 'var(--font-heading)', fontSize: '1.3rem', fontWeight: 700 }}>
+                  Show Rules & Preferences
+                </h3>
+              </div>
+              <button className="btn-icon" style={{ width: '32px', height: '32px' }} onClick={() => setShowPreferencesModal(false)}>
+                <X size={16} />
+              </button>
+            </div>
+
+            <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginBottom: '1.5rem' }}>
+              Custom playback speed, episode ordering, and auto-downloading rules for <strong>{selectedPodcast.title}</strong>.
+            </p>
+
+            {/* Custom Playback Speed */}
+            <div style={{ marginBottom: '1.2rem' }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.82rem', fontWeight: 700, color: 'var(--text-muted)', marginBottom: '0.4rem' }}>
+                <Gauge size={14} />
+                DEFAULT PLAYBACK SPEED FOR THIS SHOW
+              </label>
+              <select
+                className="search-input"
+                value={getPodcastShowSettings(selectedPodcast.id).playbackSpeed || 0}
+                onChange={(e) => updatePodcastShowSettings(selectedPodcast.id, { playbackSpeed: Number(e.target.value) || undefined })}
+                style={{ width: '100%', paddingLeft: '0.8rem' }}
+              >
+                <option value={0}>Use Global Speed ({playbackSpeed}x)</option>
+                <option value={0.5}>0.5x</option>
+                <option value={0.75}>0.75x</option>
+                <option value={1.0}>1.0x (Normal Speed)</option>
+                <option value={1.25}>1.25x</option>
+                <option value={1.5}>1.5x</option>
+                <option value={1.75}>1.75x</option>
+                <option value={2.0}>2.0x</option>
+                <option value={3.0}>3.0x</option>
+              </select>
+            </div>
+
+            {/* Episode Ordering / Sorting */}
+            <div style={{ marginBottom: '1.2rem' }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.82rem', fontWeight: 700, color: 'var(--text-muted)', marginBottom: '0.4rem' }}>
+                <ArrowDownUp size={14} />
+                EPISODE ORDERING
+              </label>
+              <select
+                className="search-input"
+                value={getPodcastShowSettings(selectedPodcast.id).sortOrder || 'newest'}
+                onChange={(e) => updatePodcastShowSettings(selectedPodcast.id, { sortOrder: e.target.value as 'newest' | 'oldest' })}
+                style={{ width: '100%', paddingLeft: '0.8rem' }}
+              >
+                <option value="newest">Newest First (Standard Podcasts)</option>
+                <option value="oldest">Oldest First (Story / Serial Podcasts)</option>
+              </select>
+            </div>
+
+            {/* Auto Download Count */}
+            <div style={{ marginBottom: '1.5rem' }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.82rem', fontWeight: 700, color: 'var(--text-muted)', marginBottom: '0.4rem' }}>
+                <Download size={14} />
+                AUTO-PRECACHE LATEST EPISODES TO LOCAL SERVER
+              </label>
+              <select
+                className="search-input"
+                value={getPodcastShowSettings(selectedPodcast.id).autoDownloadCount || 0}
+                onChange={(e) => updatePodcastShowSettings(selectedPodcast.id, { autoDownloadCount: Number(e.target.value) })}
+                style={{ width: '100%', paddingLeft: '0.8rem' }}
+              >
+                <option value={0}>Disabled (Stream on Demand)</option>
+                <option value={1}>Auto-Cache Latest 1 Episode</option>
+                <option value={3}>Auto-Cache Latest 3 Episodes</option>
+                <option value={5}>Auto-Cache Latest 5 Episodes</option>
+                <option value={10}>Auto-Cache Latest 10 Episodes</option>
+              </select>
+            </div>
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+              <button className="btn-primary" onClick={() => setShowPreferencesModal(false)}>
+                Done
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
