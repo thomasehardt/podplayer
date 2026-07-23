@@ -1,8 +1,9 @@
 import React, { createContext, useContext, useState, useEffect, useRef } from 'react';
-import type { Podcast, Episode, QueueItem, UserSettings, NavigationTab, SleepOption, SmartPlaylistRule } from '../types/podcast';
+import type { Podcast, Episode, QueueItem, UserSettings, NavigationTab, SleepOption, SmartPlaylistRule, PodcastSettings } from '../types/podcast';
 import { storageService } from '../services/storageService';
-import { rssService } from '../services/rssService';
+import { rssService, DEFAULT_PODCAST_ARTWORK } from '../services/rssService';
 import { syncService } from '../services/syncService';
+import { offlineCacheService } from '../services/offlineCacheService';
 
 interface PlayerContextType {
   // Navigation & View State
@@ -28,7 +29,7 @@ interface PlayerContextType {
   sleepTimerTimeRemaining: number | null;
   
   // Player Controls
-  playEpisode: (episode: Episode, podcastContext?: Podcast) => void;
+  playEpisode: (episode: Episode, initialTime?: number) => void;
   togglePlayPause: () => void;
   seekTo: (seconds: number) => void;
   skipForward: (seconds?: number) => void;
@@ -45,8 +46,14 @@ interface PlayerContextType {
   clearQueue: () => void;
   moveQueueItem: (fromIdx: number, toIdx: number) => void;
   playNextInQueue: () => void;
+  loadPlaylistQueue: (episodes: Episode[], startPlayingImmediately?: boolean) => void;
   isQueueOpen: boolean;
   setIsQueueOpen: (open: boolean) => void;
+  isPlayerExpanded: boolean;
+  setIsPlayerExpanded: (expanded: boolean) => void;
+  isPopoutActive: boolean;
+  openPopoutWindow: () => void;
+  closePopoutWindow: () => void;
   
   // Subscriptions, Favorites & Played Tracking
   subscriptions: Podcast[];
@@ -93,8 +100,15 @@ interface PlayerContextType {
   evaluateSmartPlaylist: (rule: SmartPlaylistRule) => Episode[];
   openPlaylistModal: boolean;
   setOpenPlaylistModal: (open: boolean) => void;
+  openCommuteModal: boolean;
+  setOpenCommuteModal: (open: boolean) => void;
   isMobileMenuOpen: boolean;
   setIsMobileMenuOpen: (open: boolean) => void;
+
+  // Per-Podcast Settings (Playback Speed, Ordering, Auto-Download)
+  allPodcastSettings: Record<string, PodcastSettings>;
+  getPodcastShowSettings: (podcastId: string) => PodcastSettings;
+  updatePodcastShowSettings: (podcastId: string, settings: Partial<PodcastSettings>) => void;
 
   // Account (Authelia-backed)
   username: string | null;
@@ -109,6 +123,7 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const [favoriteEpisodes, setFavoriteEpisodes] = useState<Episode[]>(() => storageService.getFavoriteEpisodes());
   const [queue, setQueue] = useState<QueueItem[]>(() => storageService.getQueue());
   const [podcastTags, setPodcastTags] = useState<Record<string, string[]>>(() => storageService.getPodcastTags());
+  const [allPodcastSettings, setAllPodcastSettings] = useState<Record<string, PodcastSettings>>(() => storageService.getAllPodcastSettings());
   const [smartPlaylists, setSmartPlaylists] = useState<SmartPlaylistRule[]>(() => storageService.getSmartPlaylists());
   const [selectedSmartPlaylist, setSelectedSmartPlaylist] = useState<SmartPlaylistRule | null>(null);
   
@@ -120,10 +135,137 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const [searchResults, setSearchResults] = useState<Podcast[]>([]);
   const [isSearching, setIsSearching] = useState(false);
   const [isQueueOpen, setIsQueueOpen] = useState(false);
+  const [isPlayerExpanded, setIsPlayerExpanded] = useState(false);
+  const [isPopoutActive, setIsPopoutActive] = useState(false);
   const [openRssModal, setOpenRssModal] = useState(false);
   const [openPlaylistModal, setOpenPlaylistModal] = useState(false);
+  const [openCommuteModal, setOpenCommuteModal] = useState(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [username, setUsername] = useState<string | null>(null);
+
+  const channelRef = useRef<BroadcastChannel | null>(null);
+  const popoutWindowRef = useRef<Window | null>(null);
+  const popoutActiveRef = useRef(false);
+  const mirroredStateRef = useRef<{ episode: Episode | null; time: number; playing: boolean; speed: number }>({
+    episode: null,
+    time: 0,
+    playing: false,
+    speed: 1,
+  });
+  const isPopoutWindowSelf =
+    typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('popout') === 'true';
+
+  useEffect(() => {
+    popoutActiveRef.current = isPopoutActive;
+  }, [isPopoutActive]);
+
+  // Reclaims local audio playback from the point the pop-out window last reported,
+  // used both when the main window re-attaches and when the pop-out closes itself.
+  const reclaimPlaybackFromPopout = () => {
+    const audio = audioRef.current;
+    const { episode, time, playing, speed } = mirroredStateRef.current;
+    if (!audio || !episode) return;
+    void offlineCacheService.getPlayableUrl(episode.audioUrl).then((playableUrl) => {
+      setAudioSrc(audio, playableUrl);
+      audio.playbackRate = speed || 1;
+      const resume = () => {
+        try {
+          audio.currentTime = time;
+        } catch {
+          // ignore seek error if unbuffered
+        }
+        if (playing) {
+          audio.play().catch((err: unknown) => console.error('Audio reclaim playback error:', err));
+        }
+      };
+      if (audio.readyState >= 1) {
+        resume();
+      } else {
+        audio.addEventListener('loadedmetadata', resume, { once: true });
+      }
+    });
+  };
+
+  // Broadcasts this window's live audio state; only meaningful from the pop-out
+  // window, which is the active player while it's open.
+  const broadcastPopoutState = () => {
+    if (!isPopoutWindowSelf || !channelRef.current || !audioRef.current) return;
+    channelRef.current.postMessage({
+      type: 'STATE_SYNC',
+      currentEpisode: currentEpisodeRef.current,
+      currentTime: audioRef.current.currentTime,
+      duration: audioRef.current.duration || 0,
+      isPlaying: !audioRef.current.paused,
+      playbackSpeed: audioRef.current.playbackRate,
+    });
+  };
+
+  // BroadcastChannel Sync between Main Window & Pop-Out Player Window
+  useEffect(() => {
+    if (typeof window === 'undefined' || !('BroadcastChannel' in window)) return;
+    const channel = new BroadcastChannel('podplayer_popout_sync');
+    channelRef.current = channel;
+
+    const handleMessage = (event: MessageEvent) => {
+      const { type } = event.data || {};
+      if (type === 'POPOUT_OPENED') {
+        setIsPopoutActive(true);
+      } else if (type === 'POPOUT_CLOSED') {
+        const wasActive = popoutActiveRef.current;
+        popoutActiveRef.current = false;
+        setIsPopoutActive(false);
+        if (wasActive && !isPopoutWindowSelf) {
+          reclaimPlaybackFromPopout();
+        }
+      } else if (type === 'STATE_SYNC' && !isPopoutWindowSelf) {
+        const { currentEpisode: ep, currentTime: t, duration: d, isPlaying: p, playbackSpeed: s } = event.data;
+        mirroredStateRef.current = { episode: ep ?? null, time: t ?? 0, playing: !!p, speed: s || 1 };
+        setCurrentEpisode(ep ?? null);
+        setCurrentTime(t ?? 0);
+        setDuration(d ?? 0);
+        setIsPlaying(!!p);
+        if (s) setPlaybackSpeedState(s);
+      }
+    };
+
+    channel.addEventListener('message', handleMessage);
+    return () => {
+      channel.removeEventListener('message', handleMessage);
+      channel.close();
+    };
+  }, []);
+
+  const openPopoutWindow = () => {
+    const win = window.open(
+      window.location.origin + '/?popout=true',
+      'PodPlayerMiniWindow',
+      'width=420,height=660,left=120,top=120,resizable=yes,scrollbars=no,status=no,toolbar=no,menubar=no'
+    );
+    if (!win) {
+      // Popup blocked — leave main-window playback untouched.
+      console.warn('Pop-out window blocked by the browser.');
+      return;
+    }
+    popoutWindowRef.current = win;
+    // Hand off audio ownership to the pop-out window so both windows never
+    // play at once — the pop-out reports its state back via STATE_SYNC once open.
+    if (audioRef.current) audioRef.current.pause();
+    popoutActiveRef.current = true;
+    setIsPopoutActive(true);
+    if (channelRef.current) {
+      channelRef.current.postMessage({ type: 'POPOUT_OPENED' });
+    }
+  };
+
+  const closePopoutWindow = () => {
+    // Close the real window handle; the pop-out's own beforeunload handler
+    // broadcasts POPOUT_CLOSED, which is what actually triggers reclaiming
+    // playback below — keeping a single source of truth for "the popout is gone."
+    if (popoutWindowRef.current && !popoutWindowRef.current.closed) {
+      popoutWindowRef.current.close();
+    }
+    popoutWindowRef.current = null;
+  };
   
   // Audio State
   const [currentEpisode, setCurrentEpisode] = useState<Episode | null>(null);
@@ -142,8 +284,27 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
   const sleepTimerIntervalRef = useRef<number | null>(null);
+  const activeBlobUrlRef = useRef<string | null>(null);
 
-  // Initialize HTML5 Audio Element
+  // Sets audio.src, revoking any previously-assigned blob: URL so cached
+  // episode Blobs (which can be tens of MB) don't pile up in memory over a session.
+  const setAudioSrc = (audio: HTMLAudioElement, url: string) => {
+    if (activeBlobUrlRef.current) {
+      URL.revokeObjectURL(activeBlobUrlRef.current);
+      activeBlobUrlRef.current = null;
+    }
+    if (url.startsWith('blob:')) {
+      activeBlobUrlRef.current = url;
+    }
+    audio.src = url;
+  };
+
+  const currentEpisodeRef = useRef<Episode | null>(null);
+  useEffect(() => {
+    currentEpisodeRef.current = currentEpisode;
+  }, [currentEpisode]);
+
+  // Initialize HTML5 Audio Element & Restore Saved State
   useEffect(() => {
     const audio = new Audio();
     // Do NOT set crossOrigin = 'anonymous' so cross-origin podcast CDNs play without CORS blocking
@@ -152,19 +313,34 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     audio.volume = isMuted ? 0 : volume;
     audio.playbackRate = playbackSpeed;
 
-    const handlePlay = () => setIsPlaying(true);
-    const handlePause = () => setIsPlaying(false);
+    const handlePlay = () => {
+      setIsPlaying(true);
+      broadcastPopoutState();
+    };
+    const handlePause = () => {
+      setIsPlaying(false);
+      broadcastPopoutState();
+    };
     const handleTimeUpdate = () => {
-      setCurrentTime(audio.currentTime);
-      if (currentEpisode) {
-        storageService.saveEpisodeProgress(currentEpisode.id, audio.currentTime, audio.duration || 0);
+      const t = audio.currentTime;
+      setCurrentTime(t);
+      if (currentEpisodeRef.current) {
+        storageService.saveEpisodeProgress(currentEpisodeRef.current.id, t, audio.duration || 0);
+        storageService.savePlayerState({
+          currentEpisode: currentEpisodeRef.current,
+          currentTime: t,
+          duration: audio.duration || 0,
+          playbackSpeed: audio.playbackRate || 1.0,
+        });
       }
+      broadcastPopoutState();
     };
     const handleLoadedMetadata = () => {
       setDuration(audio.duration || 0);
     };
     const handleEnded = () => {
       setIsPlaying(false);
+      broadcastPopoutState();
       if (sleepTimerOption === -1) {
         setSleepTimerOption(0);
         setSleepTimerTimeRemaining(null);
@@ -185,6 +361,34 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     audio.addEventListener('loadedmetadata', handleLoadedMetadata);
     audio.addEventListener('ended', handleEnded);
     audio.addEventListener('error', handleError);
+
+    // Restore initial player state snapshot from local storage on launch
+    const savedState = storageService.getPlayerState();
+    if (savedState && savedState.currentEpisode) {
+      setCurrentEpisode(savedState.currentEpisode);
+      setCurrentTime(savedState.currentTime);
+      setDuration(savedState.duration);
+      if (savedState.playbackSpeed) setPlaybackSpeedState(savedState.playbackSpeed);
+
+      void offlineCacheService.getPlayableUrl(savedState.currentEpisode.audioUrl).then((playableUrl) => {
+        setAudioSrc(audio, playableUrl);
+        const targetTime = savedState.currentTime;
+        const setInitialSeek = () => {
+          if (targetTime > 0 && targetTime < (audio.duration || Infinity)) {
+            try {
+              audio.currentTime = targetTime;
+            } catch {
+              // Ignore seek error if unbuffered
+            }
+          }
+        };
+        if (audio.readyState >= 1) {
+          setInitialSeek();
+        } else {
+          audio.addEventListener('loadedmetadata', setInitialSeek, { once: true });
+        }
+      });
+    }
 
     return () => {
       audio.removeEventListener('play', handlePlay);
@@ -209,6 +413,20 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
             const fresh = await rssService.parseRssFeed(show.feedUrl, show);
             return fresh;
           } catch {
+            // Attempt feed recovery via iTunes search if primary feed URL failed
+            try {
+              const searchResults = await rssService.searchiTunes(show.title);
+              const match = searchResults.find(
+                (p) => p.feedUrl && p.feedUrl !== show.feedUrl && p.title.toLowerCase().trim() === show.title.toLowerCase().trim()
+              ) || searchResults[0];
+
+              if (match && match.feedUrl && match.feedUrl !== show.feedUrl) {
+                const healed = await rssService.parseRssFeed(match.feedUrl, { ...show, feedUrl: match.feedUrl });
+                return healed;
+              }
+            } catch {
+              // Ignore recovery error
+            }
             return show;
           }
         })
@@ -327,34 +545,82 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   }, [sleepTimerOption]);
 
   // Controls Methods
-  const playEpisode = (episode: Episode) => {
+  const playEpisode = async (episode: Episode, initialTime?: number) => {
     if (!audioRef.current) return;
+    const audio = audioRef.current;
+
+    // Apply per-podcast custom playback speed if configured for this show
+    const showSettings = storageService.getPodcastShowSettings(episode.podcastId);
+    if (showSettings.playbackSpeed && showSettings.playbackSpeed > 0) {
+      setPlaybackSpeedState(showSettings.playbackSpeed);
+      audio.playbackRate = showSettings.playbackSpeed;
+    }
 
     setCurrentEpisode(episode);
     storageService.addToHistory(episode);
-    
-    // Check saved progress
-    const progressMap = storageService.getEpisodeProgress();
-    const saved = progressMap[episode.id];
-    const initialTime = saved && saved.progress < (saved.duration - 10) ? saved.progress : 0;
 
-    const proxiedStreamUrl = episode.audioUrl.startsWith('/api/stream')
-      ? episode.audioUrl
-      : `/api/stream?url=${encodeURIComponent(episode.audioUrl)}`;
+    if (initialTime === undefined) {
+      const progressMap = storageService.getEpisodeProgress();
+      const saved = progressMap[episode.id];
+      initialTime = saved && saved.progress < (saved.duration - 10) ? saved.progress : 0;
+    }
 
-    audioRef.current.src = proxiedStreamUrl;
-    audioRef.current.currentTime = initialTime;
-    audioRef.current.play().catch((err: unknown) => {
-      console.error('Audio playback error:', err);
-    });
+    const playableUrl = await offlineCacheService.getPlayableUrl(episode.audioUrl);
+    setAudioSrc(audio, playableUrl);
+
+    const targetTime = initialTime;
+    const startPlay = () => {
+      if (targetTime > 0 && targetTime < (audio.duration || Infinity)) {
+        try {
+          audio.currentTime = targetTime;
+        } catch {
+          // ignore seek error
+        }
+      }
+      audio.play().catch((err: unknown) => {
+        console.error('Audio playback error:', err);
+      });
+    };
+
+    if (audio.readyState >= 1) {
+      startPlay();
+    } else {
+      audio.addEventListener('loadedmetadata', startPlay, { once: true });
+    }
   };
 
-  const togglePlayPause = () => {
+  const togglePlayPause = async () => {
     if (!audioRef.current || !currentEpisode) return;
+    const audio = audioRef.current;
+
     if (isPlaying) {
-      audioRef.current.pause();
+      audio.pause();
     } else {
-      audioRef.current.play().catch((err: unknown) => {
+      if (!audio.src || audio.src === '' || audio.src === window.location.href) {
+        const playableUrl = await offlineCacheService.getPlayableUrl(currentEpisode.audioUrl);
+        setAudioSrc(audio, playableUrl);
+        const targetTime = currentTime;
+
+        const startResume = () => {
+          if (targetTime > 0 && targetTime < (audio.duration || Infinity)) {
+            try {
+              audio.currentTime = targetTime;
+            } catch {
+              // ignore seek error
+            }
+          }
+          audio.play().catch((err: unknown) => console.error('Audio resume error:', err));
+        };
+
+        if (audio.readyState >= 1) {
+          startResume();
+        } else {
+          audio.addEventListener('loadedmetadata', startResume, { once: true });
+        }
+        return;
+      }
+
+      audio.play().catch((err: unknown) => {
         console.error('Audio resume error:', err);
       });
     }
@@ -440,6 +706,24 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     playEpisode(nextEpisode);
   };
 
+  const loadPlaylistQueue = (episodes: Episode[], startPlayingImmediately = true) => {
+    if (!episodes || episodes.length === 0) return;
+
+    if (startPlayingImmediately) {
+      playEpisode(episodes[0]);
+    }
+
+    const remainingEpisodes = startPlayingImmediately ? episodes.slice(1) : episodes;
+    const newQueueItems: QueueItem[] = remainingEpisodes.map((ep) => ({
+      episode: ep,
+      addedAt: Date.now(),
+    }));
+
+    setQueue(newQueueItems);
+    storageService.saveQueue(newQueueItems);
+    setIsQueueOpen(true);
+  };
+
   // Subscriptions & Favorites
   const toggleSubscription = (podcast: Podcast) => {
     storageService.toggleSubscription(podcast);
@@ -478,8 +762,24 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         setFavoriteEpisodes(storageService.getFavoriteEpisodes());
         setQueue(storageService.getQueue());
         setPodcastTags(storageService.getPodcastTags());
+        setAllPodcastSettings(storageService.getAllPodcastSettings());
         setSmartPlaylists(storageService.getSmartPlaylists());
         setPlayedTick((t) => t + 1);
+
+        const savedState = storageService.getPlayerState();
+        if (savedState && savedState.currentEpisode && audioRef.current) {
+          setCurrentEpisode(savedState.currentEpisode);
+          setCurrentTime(savedState.currentTime);
+          setDuration(savedState.duration);
+          if (savedState.playbackSpeed) setPlaybackSpeedState(savedState.playbackSpeed);
+
+          const proxiedStreamUrl = savedState.currentEpisode.audioUrl.startsWith('/api/stream')
+            ? savedState.currentEpisode.audioUrl
+            : `/api/stream?url=${encodeURIComponent(savedState.currentEpisode.audioUrl)}`;
+
+          setAudioSrc(audioRef.current, proxiedStreamUrl);
+          audioRef.current.currentTime = savedState.currentTime;
+        }
       } else {
         // First time this account has been seen server-side: back up whatever's
         // already in this browser's localStorage.
@@ -487,6 +787,74 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       }
     })();
   }, []);
+
+  // Background RSS feed hydration & auto-download engine
+  useEffect(() => {
+    let isCancelled = false;
+
+    const hydrateSubscribedFeeds = async () => {
+      const currentSubs = storageService.getSubscriptions();
+      if (currentSubs.length === 0) return;
+
+      const updatedSubs = [...currentSubs];
+      let hasNewData = false;
+
+      for (let i = 0; i < updatedSubs.length; i++) {
+        if (isCancelled) break;
+        const sub = updatedSubs[i];
+
+        try {
+          const fresh = await rssService.parseRssFeed(sub.feedUrl, sub);
+          if (fresh.episodes && fresh.episodes.length > 0) {
+            updatedSubs[i] = fresh;
+            hasNewData = true;
+
+            // Auto-precache latest episodes if configured for this podcast show
+            const showSettings = storageService.getPodcastShowSettings(sub.id);
+            if (showSettings.autoDownloadCount && showSettings.autoDownloadCount > 0) {
+              const toPrecache = fresh.episodes.slice(0, showSettings.autoDownloadCount);
+              toPrecache.forEach((ep) => {
+                if (ep.audioUrl) {
+                  const streamUrl = `/api/stream?url=${encodeURIComponent(ep.audioUrl)}`;
+                  fetch(streamUrl, { method: 'HEAD' }).catch(() => {});
+                }
+              });
+            }
+          }
+        } catch {
+          // Silently keep stub if individual feed fails
+        }
+      }
+
+      if (!isCancelled && hasNewData) {
+        setSubscriptions(updatedSubs);
+        playlistCacheRef.current.clear(); // Clear cached playlist evaluations to include new episodes
+      }
+    };
+
+    // Run initial feed hydration on app launch
+    void hydrateSubscribedFeeds();
+
+    // Auto-refresh subscribed feeds every 15 minutes in the background
+    const interval = setInterval(() => {
+      void hydrateSubscribedFeeds();
+    }, 15 * 60 * 1000);
+
+    return () => {
+      isCancelled = true;
+      clearInterval(interval);
+    };
+  }, []);
+
+  const getPodcastShowSettings = (podcastId: string): PodcastSettings => {
+    return allPodcastSettings[podcastId] || {};
+  };
+
+  const updatePodcastShowSettings = (podcastId: string, updated: Partial<PodcastSettings>) => {
+    const res = storageService.savePodcastShowSettings(podcastId, updated);
+    setAllPodcastSettings(storageService.getAllPodcastSettings());
+    return res;
+  };
 
   const isEpisodePlayed = (episodeId: string) => {
     return storageService.isEpisodePlayed(episodeId);
@@ -534,8 +902,39 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     try {
       const fullPodcast = await rssService.parseRssFeed(podcast.feedUrl, podcast);
       setSelectedPodcast(fullPodcast);
-    } catch (err) {
-      console.error('Failed to parse podcast feed:', err);
+    } catch (err: any) {
+      console.warn(`Primary RSS feed failed (${podcast.feedUrl}):`, err?.message || err);
+      // Attempt auto-healing: search iTunes API by podcast title to discover updated feed URL
+      try {
+        const searchResults = await rssService.searchiTunes(podcast.title);
+        const match = searchResults.find(
+          (p) => p.feedUrl && p.feedUrl !== podcast.feedUrl && p.title.toLowerCase().trim() === podcast.title.toLowerCase().trim()
+        ) || searchResults[0];
+
+        if (match && match.feedUrl && match.feedUrl !== podcast.feedUrl) {
+          console.log(`Auto-healing feed for "${podcast.title}": switching to ${match.feedUrl}`);
+          const healedPodcast = await rssService.parseRssFeed(match.feedUrl, { ...podcast, feedUrl: match.feedUrl });
+          setSelectedPodcast(healedPodcast);
+          // If subscribed, update saved subscription with new working feedUrl
+          const currentSubs = storageService.getSubscriptions();
+          const subIdx = currentSubs.findIndex((s) => s.id === podcast.id || s.feedUrl === podcast.feedUrl);
+          if (subIdx >= 0) {
+            currentSubs[subIdx] = healedPodcast;
+            storageService.saveSubscriptions(currentSubs);
+            setSubscriptions(currentSubs);
+          }
+          return;
+        }
+      } catch (fallbackErr) {
+        console.error('iTunes feed recovery failed:', fallbackErr);
+      }
+
+      // If all fallbacks fail, set podcast with error indication
+      setSelectedPodcast({
+        ...podcast,
+        episodes: [],
+        feedError: err?.message || 'Failed to connect to podcast RSS feed',
+      } as Podcast & { feedError?: string });
     } finally {
       setIsFeedLoading(false);
     }
@@ -566,26 +965,51 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     const existingUrls = new Set(currentSubs.map((s) => s.feedUrl));
     let addedCount = 0;
 
+    const newlyAddedFeeds: Podcast[] = [];
     const newSubs: Podcast[] = [...currentSubs];
+
     for (const item of parsedOutlines) {
       if (!existingUrls.has(item.feedUrl)) {
         existingUrls.add(item.feedUrl);
         addedCount++;
-        newSubs.unshift({
+        const stub: Podcast = {
           id: item.feedUrl,
           feedUrl: item.feedUrl,
           title: item.title,
           author: 'RSS Podcast',
-          description: `Imported via OPML (${item.title})`,
-          artworkUrl: 'https://picsum.photos/600/600?random=' + (addedCount % 10),
+          description: item.description || `Imported via OPML (${item.title})`,
+          artworkUrl: DEFAULT_PODCAST_ARTWORK,
           categories: ['Imported'],
           website: item.website,
-        });
+        };
+        newlyAddedFeeds.push(stub);
+        newSubs.unshift(stub);
       }
     }
 
-    storageService.saveSubscriptions(newSubs);
-    setSubscriptions(newSubs);
+    if (addedCount > 0) {
+      storageService.saveSubscriptions(newSubs);
+      setSubscriptions(newSubs);
+
+      // Async background hydration of newly imported feeds
+      (async () => {
+        const hydratedList = [...newSubs];
+        for (const stub of newlyAddedFeeds) {
+          try {
+            const fresh = await rssService.parseRssFeed(stub.feedUrl, stub);
+            const idx = hydratedList.findIndex((s) => s.feedUrl === stub.feedUrl);
+            if (idx >= 0) {
+              hydratedList[idx] = fresh;
+              setSubscriptions([...hydratedList]);
+              storageService.saveSubscriptions(hydratedList);
+            }
+          } catch {
+            // Keep stub if individual feed parse fails
+          }
+        }
+      })();
+    }
+
     return addedCount;
   };
 
@@ -619,6 +1043,8 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   };
 
   // Smart Playlists Methods
+  const playlistCacheRef = useRef<Map<string, Episode[]>>(new Map());
+
   const createSmartPlaylist = (ruleData: Omit<SmartPlaylistRule, 'id'>) => {
     const newRule: SmartPlaylistRule = {
       ...ruleData,
@@ -627,26 +1053,36 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     const updated = [...smartPlaylists, newRule];
     setSmartPlaylists(updated);
     storageService.saveSmartPlaylists(updated);
+    playlistCacheRef.current.clear();
   };
 
   const updateSmartPlaylist = (id: string, rule: Partial<SmartPlaylistRule>) => {
     const updated = smartPlaylists.map((p) => (p.id === id ? { ...p, ...rule } : p));
     setSmartPlaylists(updated);
     storageService.saveSmartPlaylists(updated);
+    playlistCacheRef.current.clear();
   };
 
   const deleteSmartPlaylist = (id: string) => {
     const updated = smartPlaylists.filter((p) => p.id !== id);
     setSmartPlaylists(updated);
     storageService.saveSmartPlaylists(updated);
+    playlistCacheRef.current.clear();
   };
 
-  const evaluateSmartPlaylist = (rule: SmartPlaylistRule): Episode[] => {
+  const evaluateSmartPlaylist = (rule: SmartPlaylistRule, forceRefresh = false): Episode[] => {
+    if (!forceRefresh && playlistCacheRef.current.has(rule.id)) {
+      return playlistCacheRef.current.get(rule.id)!;
+    }
+
     // Gather all shows from subscriptions & selected podcast
     const allShows: Podcast[] = [...subscriptions];
     if (selectedPodcast && !allShows.some((s) => s.id === selectedPodcast.id)) {
       allShows.push(selectedPodcast);
     }
+
+    const playedMap = storageService.getPlayedEpisodes();
+    const progressMap = storageService.getEpisodeProgress();
 
     let candidateEpisodes: Episode[] = [];
     allShows.forEach((show) => {
@@ -663,7 +1099,10 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         const userTags = podcastTags[show.id] || [];
         const showCategories = show.categories || [];
         const combined = [...userTags, ...showCategories].map((t) => t.toLowerCase());
-        const matchesTag = rule.includeTags.some((tag: string) => combined.includes(tag.toLowerCase()));
+        const isMatchAll = rule.tagMatchMode === 'all';
+        const matchesTag = isMatchAll
+          ? rule.includeTags.every((tag: string) => combined.includes(tag.toLowerCase()))
+          : rule.includeTags.some((tag: string) => combined.includes(tag.toLowerCase()));
         if (!matchesTag) return;
       }
 
@@ -674,7 +1113,12 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
     // Unplayed filter
     if (rule.unplayedOnly) {
-      candidateEpisodes = candidateEpisodes.filter((ep) => !storageService.isEpisodePlayed(ep.id));
+      candidateEpisodes = candidateEpisodes.filter((ep) => {
+        if (playedMap[ep.id]) return false;
+        const saved = progressMap[ep.id];
+        if (saved && saved.duration > 0 && saved.progress / saved.duration >= 0.9) return false;
+        return true;
+      });
     }
 
     // Max duration filter
@@ -692,11 +1136,9 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       return new Date(b.pubDate).getTime() - new Date(a.pubDate).getTime();
     });
 
-    if (rule.maxEpisodes && rule.maxEpisodes > 0) {
-      return candidateEpisodes.slice(0, rule.maxEpisodes);
-    }
-
-    return candidateEpisodes;
+    const result = rule.maxEpisodes && rule.maxEpisodes > 0 ? candidateEpisodes.slice(0, rule.maxEpisodes) : candidateEpisodes;
+    playlistCacheRef.current.set(rule.id, result);
+    return result;
   };
 
   return (
@@ -735,8 +1177,14 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         clearQueue,
         moveQueueItem,
         playNextInQueue,
+        loadPlaylistQueue,
         isQueueOpen,
         setIsQueueOpen,
+        isPlayerExpanded,
+        setIsPlayerExpanded,
+        isPopoutActive,
+        openPopoutWindow,
+        closePopoutWindow,
         subscriptions,
         toggleSubscription,
         isSubscribed,
@@ -773,8 +1221,13 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         evaluateSmartPlaylist,
         openPlaylistModal,
         setOpenPlaylistModal,
+        openCommuteModal,
+        setOpenCommuteModal,
         isMobileMenuOpen,
         setIsMobileMenuOpen,
+        allPodcastSettings,
+        getPodcastShowSettings,
+        updatePodcastShowSettings,
         username,
       }}
     >

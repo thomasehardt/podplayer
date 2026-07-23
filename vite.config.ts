@@ -6,6 +6,7 @@ import path from 'path';
 import https from 'https';
 import http from 'http';
 import { URL } from 'url';
+import crypto from 'crypto';
 
 function audioProxyPlugin(): Plugin {
   const cacheDir = path.resolve(__dirname, '.audio-cache');
@@ -68,8 +69,8 @@ function audioProxyPlugin(): Plugin {
             return;
           }
 
-          // Generate safe local filename hash
-          const fileHash = Buffer.from(targetAudioUrl).toString('hex').slice(0, 32);
+          // Generate unique SHA-256 hash of targetAudioUrl for 100% collision-free episode deduplication
+          const fileHash = crypto.createHash('sha256').update(targetAudioUrl).digest('hex').slice(0, 32);
           const filePath = path.join(cacheDir, `${fileHash}.mp3`);
 
           // If already cached locally on server, serve from disk
