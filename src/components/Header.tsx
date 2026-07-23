@@ -1,6 +1,6 @@
 import React from 'react';
 import { usePlayer } from '../context/PlayerContext';
-import { Search, Moon, Sun, ListMusic, Rss, Menu, X } from 'lucide-react';
+import { Search, Moon, Sun, ListMusic, Rss, Menu, X, LogOut } from 'lucide-react';
 
 export const Header: React.FC = () => {
   const {
@@ -15,6 +15,7 @@ export const Header: React.FC = () => {
     setActiveTab,
     isMobileMenuOpen,
     setIsMobileMenuOpen,
+    username,
   } = usePlayer();
 
   const toggleTheme = () => {
@@ -97,6 +98,23 @@ export const Header: React.FC = () => {
             </span>
           )}
         </button>
+
+        {username && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginLeft: '0.25rem' }}>
+            <span style={{ fontSize: '0.85rem', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
+              {username}
+            </span>
+            <button
+              className="btn-icon"
+              title="Log out"
+              onClick={() => {
+                window.location.href = 'https://auth.thomasehardt.com/logout';
+              }}
+            >
+              <LogOut size={18} />
+            </button>
+          </div>
+        )}
       </div>
     </header>
   );

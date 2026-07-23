@@ -57,6 +57,12 @@ const DEFAULT_SMART_PLAYLISTS: SmartPlaylistRule[] = [
   },
 ];
 
+function notifyChange(): void {
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new Event('podplayer:data-changed'));
+  }
+}
+
 const DEFAULT_SETTINGS: UserSettings = {
   theme: 'dark',
   playbackSpeed: 1.0,
@@ -86,6 +92,7 @@ export const storageService = {
         episodesCount: episodes ? episodes.length : rest.episodesCount || 0,
       }));
       localStorage.setItem(KEYS.SUBSCRIPTIONS, JSON.stringify(lightPodcasts));
+      notifyChange();
     } catch (err) {
       console.error('Failed to save subscriptions:', err);
     }
@@ -137,6 +144,7 @@ export const storageService = {
     }
     try {
       localStorage.setItem(KEYS.FAVORITE_EPISODES, JSON.stringify(favs));
+      notifyChange();
     } catch (err) {
       console.error('Failed to save favorites:', err);
     }
@@ -160,6 +168,7 @@ export const storageService = {
     // Keep last 100 history items
     try {
       localStorage.setItem(KEYS.HISTORY, JSON.stringify(filtered.slice(0, 100)));
+      notifyChange();
     } catch (err) {
       console.error('Failed to update history:', err);
     }
@@ -184,6 +193,7 @@ export const storageService = {
     };
     try {
       localStorage.setItem(KEYS.EPISODE_PROGRESS, JSON.stringify(allProgress));
+      notifyChange();
     } catch (err) {
       console.error('Failed to save episode progress:', err);
     }
@@ -223,6 +233,7 @@ export const storageService = {
     map[episodeId] = isPlayed;
     try {
       localStorage.setItem(KEYS.PLAYED_EPISODES, JSON.stringify(map));
+      notifyChange();
     } catch (err) {
       console.error('Failed to save played state:', err);
     }
@@ -236,6 +247,7 @@ export const storageService = {
     });
     try {
       localStorage.setItem(KEYS.PLAYED_EPISODES, JSON.stringify(map));
+      notifyChange();
     } catch (err) {
       console.error('Failed to mark episodes as played:', err);
     }
@@ -248,6 +260,7 @@ export const storageService = {
     });
     try {
       localStorage.setItem(KEYS.PLAYED_EPISODES, JSON.stringify(map));
+      notifyChange();
     } catch (err) {
       console.error('Failed to mark episodes as unplayed:', err);
     }
@@ -267,6 +280,7 @@ export const storageService = {
   savePodcastTags(tagsMap: Record<string, string[]>): void {
     try {
       localStorage.setItem(KEYS.PODCAST_TAGS, JSON.stringify(tagsMap));
+      notifyChange();
     } catch (err) {
       console.error('Failed to save podcast tags:', err);
     }
@@ -306,6 +320,7 @@ export const storageService = {
   saveSmartPlaylists(playlists: SmartPlaylistRule[]): void {
     try {
       localStorage.setItem(KEYS.SMART_PLAYLISTS, JSON.stringify(playlists));
+      notifyChange();
     } catch (err) {
       console.error('Failed to save smart playlists:', err);
     }
@@ -324,6 +339,7 @@ export const storageService = {
   saveQueue(queue: QueueItem[]): void {
     try {
       localStorage.setItem(KEYS.QUEUE, JSON.stringify(queue));
+      notifyChange();
     } catch (err) {
       console.error('Failed to save queue:', err);
     }
@@ -342,6 +358,7 @@ export const storageService = {
   saveSettings(settings: UserSettings): void {
     try {
       localStorage.setItem(KEYS.SETTINGS, JSON.stringify(settings));
+      notifyChange();
     } catch (err) {
       console.error('Failed to save settings:', err);
     }

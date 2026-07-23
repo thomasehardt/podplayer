@@ -2,6 +2,7 @@ import React, { createContext, useContext, useState, useEffect, useRef } from 'r
 import type { Podcast, Episode, QueueItem, UserSettings, NavigationTab, SleepOption, SmartPlaylistRule } from '../types/podcast';
 import { storageService } from '../services/storageService';
 import { rssService } from '../services/rssService';
+import { syncService } from '../services/syncService';
 
 interface PlayerContextType {
   // Navigation & View State
@@ -94,6 +95,9 @@ interface PlayerContextType {
   setOpenPlaylistModal: (open: boolean) => void;
   isMobileMenuOpen: boolean;
   setIsMobileMenuOpen: (open: boolean) => void;
+
+  // Account (Authelia-backed)
+  username: string | null;
 }
 
 const PlayerContext = createContext<PlayerContextType | undefined>(undefined);
@@ -119,6 +123,7 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const [openRssModal, setOpenRssModal] = useState(false);
   const [openPlaylistModal, setOpenPlaylistModal] = useState(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  const [username, setUsername] = useState<string | null>(null);
   
   // Audio State
   const [currentEpisode, setCurrentEpisode] = useState<Episode | null>(null);
@@ -458,6 +463,31 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   // Played Status Tracking & Actions
   const [, setPlayedTick] = useState(0);
 
+  // Account Sync: identify the Authelia-authenticated user and hydrate local
+  // state from their server-side data, if any exists yet.
+  useEffect(() => {
+    (async () => {
+      const user = await syncService.whoAmI();
+      setUsername(user);
+      if (!user) return;
+
+      const hydrated = await syncService.pullAndHydrate();
+      if (hydrated) {
+        setSettings(storageService.getSettings());
+        setSubscriptions(storageService.getSubscriptions());
+        setFavoriteEpisodes(storageService.getFavoriteEpisodes());
+        setQueue(storageService.getQueue());
+        setPodcastTags(storageService.getPodcastTags());
+        setSmartPlaylists(storageService.getSmartPlaylists());
+        setPlayedTick((t) => t + 1);
+      } else {
+        // First time this account has been seen server-side: back up whatever's
+        // already in this browser's localStorage.
+        void syncService.pushNow();
+      }
+    })();
+  }, []);
+
   const isEpisodePlayed = (episodeId: string) => {
     return storageService.isEpisodePlayed(episodeId);
   };
@@ -745,6 +775,7 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         setOpenPlaylistModal,
         isMobileMenuOpen,
         setIsMobileMenuOpen,
+        username,
       }}
     >
       {children}
