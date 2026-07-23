@@ -1,0 +1,16 @@
+services:
+  podplayer:
+    container_name: podplayer
+    build: .
+    user: "1000:1000"
+    volumes:
+      - ./.audio-cache:/app/.audio-cache
+      - ./data:/app/data
+    networks:
+      - proxy
+    restart: unless-stopped
+
+networks:
+  proxy:
+    name: adguard_default
+    external: true

@@ -230,5 +230,11 @@ export default defineConfig({
   server: {
     host: true,
     port: 5173,
+    allowedHosts: ['podplayer.thomasehardt.com'],
+    watch: {
+      // Native inotify watches against a Docker bind mount are unreliable and
+      // this host's inotify budget is shared across many containers; poll instead.
+      usePolling: true,
+    },
   },
 });

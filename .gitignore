@@ -12,6 +12,7 @@ dist
 dist-ssr
 .audio-cache
 .data
+data
 *.local
 
 # Editor directories and files
